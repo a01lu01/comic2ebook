@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comic2Ebook</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,510;14..32,590&display=swap" rel="stylesheet">
+    <style>
+        /* ── Profile: Compact Desktop (Dark Default) ── */
+        :root {
+            --bg: #08090a; --surface-1: #0f1011; --surface-2: #191a1b; --surface-3: #28282c;
+            --stroke: rgba(255,255,255,0.08); --stroke-2: rgba(255,255,255,0.05); --line: #141516;
+            --text: #f7f8f8; --muted: #d0d6e0; --faint: #8a8f98; --quiet: #62666d;
+            --brand: #5e6ad2; --accent: #7170ff; --accent-hover: #828fff;
+            --comp-bg: rgba(255,255,255,0.02); --comp-bg-hover: rgba(255,255,255,0.04);
+            --shadow-1: 0 1px 2px rgba(0,0,0,0.3); --shadow-2: 0 4px 12px rgba(0,0,0,0.4);
+            --radius-6: 6px; --radius-sm: 6px; --radius-md: 12px; --radius-lg: 18px;
+            --ui: 'Inter', system-ui, -apple-system, sans-serif;
+            --mono: 'Cascadia Code', 'Consolas', monospace;
+            --s-8: 8px; --s-10: 10px; --s-12: 12px; --s-14: 14px; --s-16: 16px;
+        }
+        @media (prefers-color-scheme: light) {
+            :root {
+                --bg: #f7f8f8; --surface-1: #ffffff; --surface-2: #f5f6f7; --surface-3: #f3f4f5;
+                --stroke: rgba(16,24,40,0.12); --stroke-2: rgba(16,24,40,0.08); --line: rgba(16,24,40,0.06);
+                --text: #0f1011; --muted: #62666d; --faint: #8a8f98; --quiet: rgba(16,24,40,0.55);
+                --comp-bg: rgba(16,24,40,0.03); --comp-bg-hover: rgba(16,24,40,0.06);
+                --shadow-1: 0 1px 2px rgba(0,0,0,0.06); --shadow-2: 0 4px 12px rgba(0,0,0,0.1);
+            }
+        }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { height: 100%; overflow: hidden; }
+        body {
+            font-family: var(--ui); font-weight: 400; font-size: 12px; line-height: 1.5;
+            color: var(--text); background: var(--bg);
+            -webkit-font-smoothing: antialiased;
+            font-feature-settings: "cv01" 1, "ss03" 1;
+        }
+        .app { display: flex; flex-direction: column; height: 100vh; padding: var(--s-16); gap: var(--s-14); }
+        .topbar {
+            display: flex; align-items: center; justify-content: space-between; height: 44px;
+            padding: 0 var(--s-16); background: var(--surface-1); border: 1px solid var(--stroke);
+            border-radius: var(--radius-lg); flex-shrink: 0;
+        }
+        .topbar-left { display: flex; align-items: center; gap: var(--s-12); }
+        .topbar-icon { width: 26px; height: 26px; background: var(--brand); border-radius: var(--radius-6); display: flex; align-items: center; justify-content: center; font-size: 14px; }
+        .topbar-title { font-weight: 590; font-size: 14px; color: var(--text); }
+        .topbar-subtitle { font-weight: 400; font-size: 12px; color: var(--quiet); margin-left: 4px; }
+        .topbar-right { display: flex; align-items: center; gap: var(--s-10); }
+        .calibre-chip { display: flex; align-items: center; gap: 6px; padding: 4px 10px; background: var(--comp-bg); border: 1px solid var(--stroke-2); border-radius: var(--radius-6); font-size: 11px; color: var(--muted); }
+        .calibre-chip .dot { width: 6px; height: 6px; border-radius: 50%; }
+        .calibre-chip .dot.ok { background: #34d399; }
+        .calibre-chip .dot.warn { background: #f59e0b; }
+        .calibre-chip .dot.err { background: #ef4444; }
+        .main { display: flex; flex: 1; gap: var(--s-14); min-height: 0; }
+        .col-left { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: var(--s-14); }
+        .col-right { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: var(--s-14); }
+        .panel {
+            background: var(--surface-1); border: 1px solid var(--stroke); border-radius: var(--radius-lg);
+            padding: var(--s-16); display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; overflow: hidden;
+        }
+        .panel-header { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; margin-bottom: var(--s-12); }
+        .panel-title { font-weight: 590; font-size: 13px; color: var(--text); }
+        .panel-badge { font-size: 11px; color: var(--muted); background: var(--comp-bg); border: 1px solid var(--stroke-2); border-radius: var(--radius-6); padding: 2px 8px; }
+        .panel-body { flex: 1 1 0; min-height: 0; overflow-y: auto; }
+        .dropzone {
+            border: 1px dashed var(--stroke); border-radius: var(--radius-md); padding: var(--s-16);
+            text-align: center; cursor: pointer; transition: all 0.15s; background: var(--comp-bg);
+            flex-shrink: 0; margin-bottom: var(--s-12);
+        }
+        .dropzone:hover, .dropzone.active { border-color: var(--accent); background: var(--comp-bg-hover); }
+        .dropzone-icon { font-size: 28px; margin-bottom: var(--s-8); opacity: 0.5; }
+        .dropzone-label { font-weight: 510; font-size: 13px; color: var(--muted); margin-bottom: 2px; }
+        .dropzone-hint { font-size: 11px; color: var(--quiet); }
+        .folder-item {
+            display: flex; align-items: center; gap: var(--s-12); padding: var(--s-10) var(--s-12);
+            background: var(--comp-bg); border: 1px solid var(--stroke-2); border-radius: var(--radius-md);
+            margin-bottom: var(--s-8); transition: background 0.15s;
+        }
+        .folder-item:hover { background: var(--comp-bg-hover); border-color: var(--stroke); }
+        .folder-item:last-child { margin-bottom: 0; }
+        .folder-cover { width: 36px; height: 36px; background: var(--surface-3); border: 1px solid var(--stroke-2); border-radius: var(--radius-6); display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+        .folder-info { flex: 1; min-width: 0; }
+        .folder-name { font-weight: 510; font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .folder-meta { font-size: 11px; color: var(--quiet); display: flex; gap: var(--s-10); }
+        .remove-btn { opacity: 0; background: none; border: none; color: var(--quiet); cursor: pointer; font-size: 12px; padding: 4px; border-radius: var(--radius-6); transition: all 0.15s; }
+        .folder-item:hover .remove-btn { opacity: 1; }
+        .remove-btn:hover { color: var(--text); background: var(--comp-bg-hover); }
+        .empty-state { text-align: center; padding: var(--s-16); color: var(--quiet); font-size: 12px; }
+        .setting-group { margin-bottom: var(--s-14); }
+        .setting-group:last-child { margin-bottom: 0; }
+        .setting-label { font-weight: 510; font-size: 12px; color: var(--muted); margin-bottom: var(--s-8); }
+        .checkbox-row { display: flex; flex-wrap: wrap; gap: var(--s-8); }
+        .checkbox-pill {
+            display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: var(--comp-bg);
+            border: 1px solid var(--stroke-2); border-radius: var(--radius-6); cursor: pointer;
+            font-size: 12px; font-weight: 510; color: var(--muted); transition: all 0.15s; user-select: none;
+        }
+        .checkbox-pill:hover { background: var(--comp-bg-hover); border-color: var(--stroke); }
+        .checkbox-pill input[type="checkbox"] { appearance: none; width: 14px; height: 14px; border: 1px solid var(--stroke); border-radius: 3px; background: var(--comp-bg); cursor: pointer; position: relative; }
+        .checkbox-pill input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
+        .checkbox-pill input[type="checkbox"]:checked::after { content: ''; position: absolute; left: 3px; top: 1px; width: 5px; height: 8px; border: solid #fff; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
+        .checkbox-hint { font-size: 11px; color: var(--quiet); margin-top: 6px; }
+        .path-row { display: flex; align-items: center; gap: var(--s-8); }
+        .path-display { flex: 1; padding: 6px 10px; background: var(--comp-bg); border: 1px solid var(--stroke); border-radius: var(--radius-6); font-size: 11px; font-family: var(--mono); color: var(--quiet); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .btn {
+            display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+            padding: 6px 14px; font-family: inherit; font-size: 12px; font-weight: 510;
+            border-radius: var(--radius-6); cursor: pointer; transition: all 0.15s;
+            border: 1px solid var(--stroke-2); color: var(--muted); background: var(--comp-bg); user-select: none;
+        }
+        .btn:hover { background: var(--comp-bg-hover); border-color: var(--stroke); }
+        .btn:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(113,112,255,0.35); }
+        .btn:active { background: var(--surface-3); }
+        .btn-primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+        .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+        .btn-start { width: 100%; padding: 10px; font-size: 13px; font-weight: 590; border-radius: var(--radius-md); flex-shrink: 0; }
+        .btn-start:disabled { background: var(--comp-bg); border-color: var(--stroke-2); color: var(--quiet); cursor: not-allowed; }
+        .progress-item {
+            padding: var(--s-12); background: var(--comp-bg); border: 1px solid var(--stroke-2);
+            border-radius: var(--radius-md); margin-bottom: var(--s-8);
+        }
+        .progress-item:last-child { margin-bottom: 0; }
+        .progress-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--s-8); }
+        .progress-name { display: flex; align-items: center; gap: var(--s-8); font-weight: 510; font-size: 13px; color: var(--text); }
+        .status-tag { font-size: 11px; font-weight: 510; padding: 2px 8px; border-radius: var(--radius-6); }
+        .status-tag.running { background: rgba(94,106,210,0.15); color: var(--accent); }
+        .status-tag.pending { background: var(--comp-bg); color: var(--quiet); border: 1px solid var(--stroke-2); }
+        .status-tag.done { background: rgba(52,211,153,0.12); color: #34d399; }
+        .status-tag.failed { background: rgba(239,68,68,0.12); color: #ef4444; }
+        .progress-track { height: 3px; background: var(--surface-3); border-radius: 2px; overflow: hidden; margin-bottom: var(--s-8); }
+        .progress-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s ease; }
+        .format-tags { display: flex; gap: 4px; flex-wrap: wrap; }
+        .format-tag { font-size: 10px; font-weight: 510; padding: 2px 6px; border-radius: 4px; background: var(--comp-bg); color: var(--quiet); border: 1px solid var(--stroke-2); }
+        .format-tag.ok { background: rgba(52,211,153,0.1); color: #34d399; border-color: transparent; }
+        .format-tag.ing { background: rgba(94,106,210,0.12); color: var(--accent); border-color: transparent; }
+        .format-tag.warn { background: rgba(250,204,21,0.12); color: #facc15; border-color: transparent; }
+        .bottombar { display: flex; align-items: center; justify-content: flex-end; gap: var(--s-8); flex-shrink: 0; }
+
+    /* Modal */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; }
+    .modal { background: var(--bg); border: 1px solid var(--stroke-2); border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); }
+    .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--stroke-2); }
+    .modal-title { font-size: 14px; font-weight: 600; }
+    .modal-close { background: none; border: none; color: var(--quiet); font-size: 20px; cursor: pointer; padding: 0; line-height: 1; }
+    .modal-close:hover { color: var(--fg); }
+    </style>
+</head>
+<body>
+<div class="app">
+    <div class="topbar">
+        <div class="topbar-left">
+            <div class="topbar-icon">📚</div>
+            <span class="topbar-title">Comic2Ebook</span>
+            <span class="topbar-subtitle">漫画转电子书</span>
+        </div>
+        <div class="topbar-right">
+            <div class="calibre-chip" id="calibreStatus">
+                <span class="dot"></span>
+                <span id="calibreLabel">检测中…</span>
+            </div>
+        </div>
+    </div>
+    <div class="main">
+        <div class="col-left">
+            <div class="panel" id="folderPanel">
+                <div class="panel-header">
+                    <span class="panel-title">漫画文件夹</span>
+                    <span class="panel-badge" id="folderCount">0</span>
+                </div>
+                <div class="dropzone" id="dropzone">
+                    <div class="dropzone-icon">📁</div>
+                    <div class="dropzone-label">点击选择或拖拽文件夹</div>
+                    <div class="dropzone-hint">JPG · PNG · WebP</div>
+                </div>
+                <div class="panel-body" id="folderList">
+                    <div class="empty-state">尚未选择任何文件夹</div>
+                </div>
+            </div>
+            <div class="panel" style="flex: 0 0 auto;" id="settingsPanel">
+                <div class="panel-header"><span class="panel-title">输出设置</span></div>
+                <div class="setting-group">
+                    <div class="setting-label">输出格式</div>
+                    <div class="checkbox-row" id="formatCheckboxes">
+                        <label class="checkbox-pill"><input type="checkbox" value="cbz" checked> CBZ</label>
+                        <label class="checkbox-pill"><input type="checkbox" value="pdf" checked> PDF</label>
+                        <label class="checkbox-pill"><input type="checkbox" value="epub"> EPUB</label>
+                        <label class="checkbox-pill"><input type="checkbox" value="azw3"> AZW3</label>
+                        <label class="checkbox-pill"><input type="checkbox" value="mobi"> MOBI</label>
+                    </div>
+                    <div class="checkbox-hint">CBZ 无需 Calibre，其余格式依赖 Calibre CLI</div>
+                </div>
+                <div class="setting-group">
+                    <div class="setting-label">输出目录</div>
+                    <div class="path-row">
+                        <div class="path-display" id="outputPath">（默认与源文件夹同目录）</div>
+                        <button class="btn" id="browseOutputBtn">浏览…</button>
+                    </div>
+                </div>
+            </div>
+            <button class="btn btn-primary btn-start" id="startBtn" disabled>
+                ▶ 开始转换
+            </button>
+        </div>
+        <div class="col-right">
+            <div class="panel" id="progressPanel">
+                <div class="panel-header"><span class="panel-title">转换进度</span></div>
+                <div class="panel-body" id="progressList">
+                    <div class="empty-state">等待开始转换</div>
+                </div>
+            </div>
+            <div class="bottombar" id="bottomBar">
+                <button class="btn" id="openDirBtn">📂 打开输出目录</button>
+                <button class="btn" id="copyPathBtn" title="复制输出目录路径">📋 复制路径</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- JSZip -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+// ═══════════════════════════════════════════
+// State
+// ═══════════════════════════════════════════
+const state = {
+    folders: [],          // {id, name, images: [{name,file}], fileCount}
+    outputDir: null,      // FileSystemDirectoryHandle
+    _outputDirPath: null, // Real filesystem path (set by Electron IPC)
+    selectedFormats: ['cbz', 'pdf'],
+    tasks: [],            // {id, folderName, status, progress, subTasks: [{format,status,progress}]}
+    calibrePath: null,    // null = not found, string = path
+    results: [],          // {folderId, name, src, blob, format, pendingCalibre}
+    busy: false,
+};
+const ALL_FORMATS = ['cbz', 'pdf', 'epub', 'azw3', 'mobi'];
+const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
+
+// ═══════════════════════════════════════════
+// DOM refs
+// ═══════════════════════════════════════════
+const $ = id => document.getElementById(id);
+const dropzone = $('dropzone');
+const folderList = $('folderList');
+const folderCount = $('folderCount');
+const startBtn = $('startBtn');
+const progressList = $('progressList');
+const outputPath = $('outputPath');
+const calibreLabel = $('calibreLabel');
+const calibreDot = document.querySelector('.calibre-chip .dot');
+const formatCheckboxes = $('formatCheckboxes');
+
+// ═══════════════════════════════════════════
+// Calibre Detection
+// ═══════════════════════════════════════════
+async function detectCalibre() {
+    // With nodeIntegration: true, require('electron') is available immediately
+    if (window.ipcRenderer) {
+        try {
+            const calibrePath = await window.ipcRenderer.invoke('calibre:check');
+            state.calibrePath = calibrePath;
+            if (calibrePath) {
+                calibreDot.className = 'dot ok';
+                calibreLabel.textContent = 'Calibre 已就绪';
+            } else {
+                calibreDot.className = 'dot warn';
+                calibreLabel.textContent = 'Calibre 未检测到';
+            }
+            return;
+        } catch (err) {
+            console.warn('IPC calibre check failed:', err.message);
+        }
+    }
+
+    // Fallback: browser mode
+    calibreDot.className = 'dot warn';
+    calibreLabel.textContent = 'Calibre 未检测到（浏览器模式）';
+}
+
+// ═══════════════════════════════════════════
+// Folder Selection
+// ═══════════════════════════════════════════
+// Comic folder selection — use Electron dialog in app mode
+dropzone.addEventListener('click', async () => {
+    // Electron mode: use main process dialog with multi-select
+    if (window.ipcRenderer) {
+        try {
+            const dirs = await window.ipcRenderer.invoke('fs:open-comic-directories');
+            if (!dirs || dirs.length === 0) return;
+            for (const dir of dirs) {
+                await addComicFolder(dir.path, dir.name);
+            }
+        } catch (err) {
+            if (err.name !== 'AbortError') console.error(err);
+        }
+        return;
+    }
+
+    // Browser fallback: use File System Access API
+    try {
+        const dirHandle = await window.showDirectoryPicker({ mode: 'read' });
+        await addFolder(dirHandle);
+    } catch (err) {
+        if (err.name !== 'AbortError') console.error(err);
+    }
+});
+
+// Also handle drag-drop in Electron mode
+dropzone.addEventListener('drop', async e => {
+    e.preventDefault();
+    dropzone.classList.remove('active');
+    if (window.ipcRenderer) return; // Electron: use click dialog instead
+    // Browser fallback drag-drop
+    const items = e.dataTransfer.items;
+    for (const item of items) {
+        if (item.kind === 'file') {
+            const entry = await item.getAsFileSystemHandle();
+            if (entry.kind === 'directory') await addFolder(entry);
+        }
+    }
+});
+
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('active'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('active'));
+
+async function addFolder(dirHandle) {
+    const id = crypto.randomUUID();
+    const images = [];
+    for await (const [name, handle] of dirHandle.entries()) {
+        if (handle.kind === 'file') {
+            const ext = '.' + name.split('.').pop().toLowerCase();
+            if (IMAGE_EXTS.includes(ext)) {
+                images.push({ name, handle });
+            }
+        }
+    }
+    if (images.length === 0) {
+        alert(`文件夹 "${dirHandle.name}" 中没有找到图片文件`);
+        return;
+    }
+    images.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    state.folders.push({ id, name: dirHandle.name, images, handle: dirHandle });
+    renderFolders();
+}
+
+// Electron mode: add comic folder via real filesystem path
+async function addComicFolder(dirPath, dirName) {
+    if (!window.ipcRenderer) return;
+
+    const images = await window.ipcRenderer.invoke('fs:list-images', dirPath);
+    if (!images || images.length === 0) {
+        alert(`文件夹 "${dirName}" 中没有找到图片文件`);
+        return;
+    }
+
+    const id = crypto.randomUUID();
+    const imagesWithHandles = images.map(name => ({ name, path: dirPath + '/' + name }));
+    imagesWithHandles.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+    state.folders.push({
+        id,
+        name: dirName,
+        images: imagesWithHandles,
+        path: dirPath,  // Store real path for Electron
+    });
+    renderFolders();
+}
+
+function removeFolder(id) {
+    state.folders = state.folders.filter(f => f.id !== id);
+    renderFolders();
+}
+
+function renderFolders() {
+    folderCount.textContent = state.folders.length;
+    if (state.folders.length === 0) {
+        folderList.innerHTML = '<div class="empty-state">尚未选择任何文件夹</div>';
+        startBtn.disabled = true;
+        return;
+    }
+    folderList.innerHTML = state.folders.map(f => `
+        <div class="folder-item">
+            <div class="folder-cover">📖</div>
+            <div class="folder-info">
+                <div class="folder-name">${escapeHtml(f.name)}</div>
+                <div class="folder-meta">
+                    <span>${f.images.length} 张</span>
+                    <span>${getMainExt(f.images)}</span>
+                </div>
+            </div>
+            <button class="remove-btn" onclick="removeFolder('${f.id}')">✕</button>
+        </div>
+    `).join('');
+    startBtn.disabled = false;
+    updateStartBtn();
+}
+
+function getMainExt(images) {
+    const exts = {};
+    images.forEach(i => { const e = i.name.split('.').pop().toUpperCase(); exts[e] = (exts[e] || 0) + 1; });
+    const entries = Object.entries(exts).sort((a, b) => b[1] - a[1]);
+    return entries.length > 0 ? entries[0][0] : '';
+}
+
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+// ═══════════════════════════════════════════
+// Format selection
+// ═══════════════════════════════════════════
+formatCheckboxes.addEventListener('change', () => {
+    state.selectedFormats = [...formatCheckboxes.querySelectorAll('input:checked')].map(cb => cb.value);
+    updateStartBtn();
+});
+
+function updateStartBtn() {
+    const hasFolders = state.folders.length > 0;
+    const hasFormats = state.selectedFormats.length > 0;
+    startBtn.disabled = !hasFolders || !hasFormats || state.busy;
+    const calibreFormats = ['pdf', 'epub', 'azw3', 'mobi'];
+    const needsCalibre = state.selectedFormats.some(f => calibreFormats.includes(f));
+    if (needsCalibre && !state.calibrePath) {
+        startBtn.title = '注意：所选格式需要 Calibre，当前未检测到。CBZ 会直接生成，其他格式可生成脚本稍后转换';
+    } else if (state.selectedFormats.includes('cbz')) {
+        startBtn.title = '';
+    } else {
+        startBtn.title = '注意：CBZ 可直接生成，其他格式需要 Calibre';
+    }
+}
+
+// ═══════════════════════════════════════════
+// Output directory
+// ═══════════════════════════════════════════
+$('browseOutputBtn').addEventListener('click', async () => {
+    try {
+        if (window.ipcRenderer) {
+            const result = await window.ipcRenderer.invoke('fs:open-directory');
+            if (result) {
+                state._outputDirPath = result.path;
+                outputPath.textContent = result.path;  // Show full path in Electron mode
+            }
+            return;
+        }
+
+        // Browser fallback: use File System Access API
+        const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+        state.outputDir = handle;
+        outputPath.textContent = handle.name;
+    } catch (err) {
+        if (err.name !== 'AbortError') console.error(err);
+    }
+});
+
+// ═══════════════════════════════════════════
+// Start Conversion
+// ═══════════════════════════════════════════
+startBtn.addEventListener('click', startConversion);
+
+async function startConversion() {
+    if (state.folders.length === 0 || state.selectedFormats.length === 0) return;
+    if (state.busy) return;
+
+    state.busy = true;
+    state.tasks = [];
+    state.results = [];
+    updateStartBtn();
+
+    // Prepare tasks
+    for (const folder of state.folders) {
+        const subTasks = state.selectedFormats.map(f => ({ format: f, status: 'pending', progress: 0 }));
+        state.tasks.push({
+            id: folder.id,
+            folderName: folder.name,
+            status: 'pending',
+            progress: 0,
+            subTasks,
+        });
+    }
+    renderProgress();
+
+    // Process sequentially (or could be parallel per folder)
+    for (const task of state.tasks) {
+        const folder = state.folders.find(f => f.id === task.id);
+        if (!folder) continue;
+
+        task.status = 'running';
+        renderProgress();
+
+        try {
+            // Step 1: Pack CBZ
+            const cbzSub = task.subTasks.find(s => s.format === 'cbz');
+            if (cbzSub) {
+                cbzSub.status = 'running';
+                renderProgress();
+                await packCBZ(folder, task);
+                cbzSub.status = 'done';
+                cbzSub.progress = 100;
+                renderProgress();
+            }
+
+            // Step 2: Convert to other formats using Calibre
+            for (const sub of task.subTasks) {
+                if (sub.format === 'cbz') continue;
+                if (!state.calibrePath) {
+                    sub.status = 'done';
+                    sub.progress = 100;
+                    sub.hint = '待脚本转换';
+                    continue;
+                }
+                sub.status = 'running';
+                renderProgress();
+                try {
+                    await convertWithCalibre(folder, task, sub);
+                    sub.status = 'done';
+                    sub.progress = 100;
+                } catch (err) {
+                    sub.status = 'failed';
+                    sub.error = err.message;
+                }
+                renderProgress();
+            }
+
+            task.status = 'done';
+            task.progress = 100;
+        } catch (err) {
+            task.status = 'failed';
+            task.error = err.message;
+        }
+        renderProgress();
+    }
+
+    state.busy = false;
+    updateStartBtn();
+    renderProgress();
+}
+
+// ═══════════════════════════════════════════
+// CBZ Packing (JSZip)
+// ═══════════════════════════════════════════
+async function packCBZ(folder, task) {
+    const zip = new JSZip();
+    const padLen = String(folder.images.length).length;
+
+    for (let i = 0; i < folder.images.length; i++) {
+        const img = folder.images[i];
+        const ext = img.name.split('.').pop();
+        const newName = String(i + 1).padStart(padLen, '0') + '.' + ext;
+        let buffer;
+
+        if (folder.path && window.ipcRenderer) {
+            // Electron mode: read image via main process
+            const base64 = await window.ipcRenderer.invoke('fs:read-image', {
+                dirPath: folder.path,
+                fileName: img.name,
+            });
+            buffer = Uint8Array.from(atob(base64), c => c.charCodeAt(0)).buffer;
+        } else {
+            // Browser mode: use FileSystemDirectoryHandle
+            const file = await img.handle.getFile();
+            buffer = await file.arrayBuffer();
+        }
+
+        zip.file(newName, buffer);
+        const fmt = task.subTasks.find(s => s.format === 'cbz');
+        if (fmt) fmt.progress = Math.round(((i + 1) / folder.images.length) * 100);
+        task.progress = Math.round((i + 1) / folder.images.length * 100);
+        if (i % 10 === 0) renderProgress();
+    }
+
+    const blob = await zip.generateAsync({ type: 'blob' });
+
+    // Save result
+    const otherFormats = state.selectedFormats.filter(f => f !== 'cbz');
+    state.results.push({ folderId: folder.id, name: `${folder.name}.cbz`, src: `${folder.name}.cbz`, blob, format: 'cbz', pendingCalibre: otherFormats.length > 0 });
+
+    // Save to output directory or trigger download
+    if (state.outputDir) {
+        // Browser mode: use File System Access API
+        const fileHandle = await state.outputDir.getFileHandle(`${folder.name}.cbz`, { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+    } else if (state._outputDirPath && window.ipcRenderer) {
+        // Electron mode: use main process to write file
+        await window.ipcRenderer.invoke('fs:write-file', {
+            dirPath: state._outputDirPath,
+            fileName: `${folder.name}.cbz`,
+            arrayBuffer: await blob.arrayBuffer(),
+        });
+    } else {
+        // Browser fallback: trigger download
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${folder.name}.cbz`;
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+}
+
+// ═══════════════════════════════════════════
+// Calibre Conversion (via generated script)
+// ═══════════════════════════════════════════
+async function convertWithCalibre(folder, task, subTask) {
+    // Try Electron IPC first (main process spawns ebook-convert directly)
+    if (window.ipcRenderer && window.ipcRenderer.invoke) {
+        if (!state._outputDirPath) {
+            throw new Error('请先选择输出目录');
+        }
+
+        try {
+            const result = await window.ipcRenderer.invoke('calibre:convert', {
+                exe: state.calibrePath,
+                outputDir: state._outputDirPath,
+                folderName: folder.name,
+                format: subTask.format,
+            });
+
+            if (!result.success) {
+                throw new Error(`Calibre 转换失败 (退出码 ${result.exitCode})`);
+            }
+            return;
+        } catch (err) {
+            // Fall through to script generation fallback
+            console.warn('Electron IPC conversion failed, falling back:', err.message);
+        }
+    }
+
+    // Fallback: browser mode — generate .bat script
+    const inputCbz = `${folder.name}.cbz`;
+    const outputFile = `${folder.name}.${subTask.format}`;
+    if (state.outputDir) {
+        const batContent = `@echo off\r\nchcp 65001 >nul\r\ncd /d "%~dp0"\r\n& "${state.calibrePath}" "${inputCbz}" "${outputFile}"\r\necho Done.\r\npause`;
+        try {
+            const fileHandle = await state.outputDir.getFileHandle(`_convert_${folder.name}.bat`, { create: true });
+            const writable = await fileHandle.createWritable();
+            await writable.write(new Blob([batContent], { type: 'text/plain' }));
+            await writable.close();
+        } catch (_) {}
+    }
+    subTask.error = `浏览器无法直接调用 Calibre，已生成批处理脚本。`;
+    throw new Error(subTask.error);
+}
+
+// ═══════════════════════════════════════════
+// Electron IPC Progress Listener (real-time)
+// ═══════════════════════════════════════════
+if (window.ipcRenderer && window.ipcRenderer.on) {
+    window.ipcRenderer.on('calibre:percent', (event, data) => {
+        // Update current running task progress
+        const runningTask = state.tasks.find(t => t.status === 'running');
+        if (runningTask) {
+            const runningSub = runningTask.subTasks.find(s => s.status === 'running');
+            if (runningSub) {
+                runningSub.progress = data.percent;
+                renderProgress();
+            }
+        }
+    });
+
+    window.ipcRenderer.on('calibre:progress', (event, data) => {
+        // Could show log output in a console panel later
+        if (data.isError) console.error('[Calibre]', data.chunk);
+    });
+}
+
+// ═══════════════════════════════════════════
+// Render Progress
+// ═══════════════════════════════════════════
+function renderProgress() {
+    if (state.tasks.length === 0) {
+        progressList.innerHTML = '<div class="empty-state">等待开始转换</div>';
+        return;
+    }
+    progressList.innerHTML = state.tasks.map(t => {
+        const allDone = t.subTasks.every(s => s.status === 'done');
+        const anyFailed = t.subTasks.some(s => s.status === 'failed');
+        let statusClass = 'pending';
+        let statusText = '等待';
+        if (t.status === 'running') { statusClass = 'running'; statusText = '转换中'; }
+        if (allDone) { statusClass = 'done'; statusText = '完成'; }
+        if (anyFailed && t.status !== 'running') { statusClass = 'failed'; statusText = '部分失败'; }
+        const overallProgress = t.subTasks.length > 0
+            ? Math.round(t.subTasks.reduce((sum, s) => sum + s.progress, 0) / t.subTasks.length)
+            : 0;
+
+        return `
+            <div class="progress-item">
+                <div class="progress-top">
+                    <div class="progress-name">
+                        <span>📖</span>
+                        <span>${escapeHtml(t.folderName)}</span>
+                    </div>
+                    <span class="status-tag ${statusClass}">${statusText}</span>
+                </div>
+                <div class="progress-track">
+                    <div class="progress-fill" style="width:${overallProgress}%;"></div>
+                </div>
+                <div class="format-tags">
+                    ${t.subTasks.map(s => {
+                        let cls = '';
+                        let prefix = '';
+                        if (s.status === 'done' && s.hint) { cls = 'warn'; prefix = '⏳'; }
+                        else if (s.status === 'done') { cls = 'ok'; prefix = '✓'; }
+                        else if (s.status === 'running') { cls = 'ing'; prefix = '↻'; }
+                        return `<span class="format-tag ${cls}">${prefix} ${s.format.toUpperCase()}</span>`;
+                    }).join('')}
+                </div>
+                ${t.subTasks.filter(s => s.hint).map(s => `<div style="margin-top:4px;font-size:10px;color:#facc15;">⏳ ${escapeHtml(s.hint)}</div>`).join('')}
+                ${t.subTasks.filter(s => s.error).map(s => `<div style="margin-top:4px;font-size:10px;color:#ef4444;">⚠ ${escapeHtml(s.error)}</div>`).join('')}
+            </div>
+        `;
+    }).join('');
+}
+
+// ═══════════════════════════════════════════
+// Bottom actions
+// ═══════════════════════════════════════════
+$('openDirBtn').addEventListener('click', () => {
+    // Electron: open output dir in native explorer
+    if (state._outputDirPath && window.ipcRenderer) {
+        window.ipcRenderer.invoke('fs:open-path', state._outputDirPath);
+        return;
+    }
+    if (state.outputDir) {
+        alert(`输出文件在: ${state.outputDir.name} 文件夹`);
+    } else {
+        alert('请先选择输出目录');
+    }
+});
+
+$('copyPathBtn').addEventListener('click', () => {
+    const src = state._outputDirPath || (state.outputDir ? state.outputDir.name : null);
+    if (!src) { alert('请先选择输出目录'); return; }
+    navigator.clipboard.writeText(src).then(() => {
+        const btn = $('copyPathBtn');
+        btn.textContent = '已复制';
+        setTimeout(() => btn.textContent = '📋 复制路径', 1200);
+    });
+});
+
+// Init
+// ═══════════════════════════════════════════
+(async () => {
+    // Poll for ipcRenderer (may be injected after page load by Electron main process)
+    for (let i = 0; i < 30 && !window.ipcRenderer; i++) {
+        await new Promise(r => setTimeout(r, 100));
+    }
+    detectCalibre().finally(() => updateStartBtn());
+})();
+</script>
+
+</html>

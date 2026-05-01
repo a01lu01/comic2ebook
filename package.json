@@ -1,0 +1,11 @@
+{
+  "name": "Comic2Ebook",
+  "version": "1.0.0",
+  "description": "漫画转电子书工具",
+  "main": "main.js",
+  "author": "雪豹",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^41.3.0"
+  }
+}
