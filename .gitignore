@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Build output (regenerate with: npx electron-packager . Comic2Ebook --platform=win32 --arch=x64 --out=dist)
+dist/
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+Thumbs.db
+.DS_Store
+
+# npm
+npm-debug.log*
