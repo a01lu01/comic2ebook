@@ -3,6 +3,26 @@ const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
 
+// ═══════════════════════════════════════════
+// Settings persistence
+// ═══════════════════════════════════════════
+const SETTINGS_FILE = path.join(app.getPath('userData'), 'settings.json');
+
+function loadSettings() {
+    try {
+        if (fs.existsSync(SETTINGS_FILE)) {
+            return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8'));
+        }
+    } catch (e) { /* ignore corrupt file */ }
+    return {};
+}
+
+function saveSettings(settings) {
+    const dir = path.dirname(SETTINGS_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+}
+
 app.disableHardwareAcceleration();
 
 let mainWindow;
@@ -291,6 +311,18 @@ ipcMain.handle('calibre:convert', ipcWrap(async (event, { exe, outputDir, folder
 
         proc.on('error', (err) => reject(err));
     });
+}));
+
+// ═══════════════════════════════════════════
+// IPC: Settings persistence
+// ═══════════════════════════════════════════
+ipcMain.handle('fs:load-settings', ipcWrap(async () => {
+    return loadSettings();
+}));
+
+ipcMain.handle('fs:save-settings', ipcWrap(async (event, settings) => {
+    saveSettings(settings);
+    return true;
 }));
 
 app.whenReady().then(createWindow);

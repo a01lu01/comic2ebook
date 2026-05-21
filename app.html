@@ -480,6 +480,8 @@ $('browseOutputBtn').addEventListener('click', async () => {
             if (dir) {
                 state._outputDirPath = dir.path;
                 outputPath.textContent = dir.path;
+                // Persist for next session
+                try { await window.ipcRenderer.invoke('fs:save-settings', { outputDir: dir.path }); } catch (_) {}
             }
             return;
         }
@@ -797,6 +799,19 @@ $('copyPathBtn').addEventListener('click', () => {
     // Poll for ipcRenderer (may be injected after page load by Electron main process)
     for (let i = 0; i < 30 && !window.ipcRenderer; i++) {
         await new Promise(r => setTimeout(r, 100));
+    }
+    // Restore saved output directory
+    if (window.ipcRenderer) {
+        try {
+            const result = await window.ipcRenderer.invoke('fs:load-settings');
+            const settings = ipcData(result);
+            if (settings.outputDir) {
+                state._outputDirPath = settings.outputDir;
+                outputPath.textContent = settings.outputDir;
+            }
+        } catch (err) {
+            console.warn('Failed to restore output dir:', err.message);
+        }
     }
     detectCalibre().finally(() => updateStartBtn());
 })();
