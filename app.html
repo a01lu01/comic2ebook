@@ -226,33 +226,20 @@
 // State
 // ═══════════════════════════════════════════
 const state = {
-    folders: [],          // {id, name, images: [{name,file}], fileCount}
-    outputDir: null,      // FileSystemDirectoryHandle
-    _outputDirPath: null, // Real filesystem path (set by Electron IPC)
+    folders: [],
+    _outputDirPath: null,
     selectedFormats: ['cbz', 'pdf'],
-    tasks: [],            // {id, folderName, status, progress, subTasks: [{format,status,progress}]}
-    calibrePath: null,    // null = not found, string = path
-    results: [],          // {folderId, name, src, blob, format, pendingCalibre}
+    tasks: [],
+    calibrePath: null,
+    results: [],
     busy: false,
 };
 const ALL_FORMATS = ['cbz', 'pdf', 'epub', 'azw3', 'mobi'];
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
 
 // ═══════════════════════════════════════════
-// Phase 1 Helpers
+// Helpers
 // ═══════════════════════════════════════════
-
-// P1-06: Unwrap IPC {success, data/error} response
-function ipcData(result) {
-    if (!result || result.success === false) {
-        const err = result?.error;
-        const msg = err ? `[${err.code}] ${err.message}` : 'IPC call failed';
-        throw new Error(msg);
-    }
-    return result.data;
-}
-
-// P1-02: Natural sort
 function naturalSort(a, b) {
     const re = /(\d+)|(\D+)/g;
     const aParts = String(a).match(re) || [String(a)];
@@ -287,105 +274,46 @@ const calibreDot = document.querySelector('.calibre-chip .dot');
 const formatCheckboxes = $('formatCheckboxes');
 
 // ═══════════════════════════════════════════
-// Calibre Detection
+// Calibre Detection (P2-01: via window.api)
 // ═══════════════════════════════════════════
 async function detectCalibre() {
-    if (window.ipcRenderer) {
-        try {
-            const result = await window.ipcRenderer.invoke('calibre:check');
-            const calibrePath = ipcData(result);
-            state.calibrePath = calibrePath;
-            if (calibrePath) {
-                calibreDot.className = 'dot ok';
-                calibreLabel.textContent = 'Calibre 已就绪';
-            } else {
-                calibreDot.className = 'dot warn';
-                calibreLabel.textContent = 'Calibre 未检测到';
-            }
-            return;
-        } catch (err) {
-            console.warn('IPC calibre check failed:', err.message);
+    try {
+        const calibrePath = await window.api.checkCalibre();
+        state.calibrePath = calibrePath;
+        if (calibrePath) {
+            calibreDot.className = 'dot ok';
+            calibreLabel.textContent = 'Calibre 已就绪';
+        } else {
+            calibreDot.className = 'dot warn';
+            calibreLabel.textContent = 'Calibre 未检测到';
         }
+    } catch (err) {
+        console.warn('Calibre check failed:', err.message);
+        calibreDot.className = 'dot warn';
+        calibreLabel.textContent = 'Calibre 未检测到';
     }
-
-    // Fallback: browser mode
-    calibreDot.className = 'dot warn';
-    calibreLabel.textContent = 'Calibre 未检测到（浏览器模式）';
 }
 
 // ═══════════════════════════════════════════
-// Folder Selection
+// Folder Selection (P2-01: via window.api)
 // ═══════════════════════════════════════════
-// Comic folder selection — use Electron dialog in app mode
 dropzone.addEventListener('click', async () => {
-    // Electron mode: use main process dialog with multi-select
-    if (window.ipcRenderer) {
-        try {
-            const result = await window.ipcRenderer.invoke('fs:open-comic-directories');
-            const dirs = ipcData(result);
-            if (!dirs || dirs.length === 0) return;
-            for (const dir of dirs) {
-                await addComicFolder(dir.path, dir.name);
-            }
-        } catch (err) {
-            if (err.name !== 'AbortError') console.error(err);
-        }
-        return;
-    }
-
-    // Browser fallback: use File System Access API
     try {
-        const dirHandle = await window.showDirectoryPicker({ mode: 'read' });
-        await addFolder(dirHandle);
+        const dirs = await window.api.openDirs();
+        if (!dirs || dirs.length === 0) return;
+        for (const dir of dirs) {
+            await addComicFolder(dir.path, dir.name);
+        }
     } catch (err) {
         if (err.name !== 'AbortError') console.error(err);
-    }
-});
-
-// Also handle drag-drop in Electron mode
-dropzone.addEventListener('drop', async e => {
-    e.preventDefault();
-    dropzone.classList.remove('active');
-    if (window.ipcRenderer) return; // Electron: use click dialog instead
-    // Browser fallback drag-drop
-    const items = e.dataTransfer.items;
-    for (const item of items) {
-        if (item.kind === 'file') {
-            const entry = await item.getAsFileSystemHandle();
-            if (entry.kind === 'directory') await addFolder(entry);
-        }
     }
 });
 
 dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('active'); });
 dropzone.addEventListener('dragleave', () => dropzone.classList.remove('active'));
 
-async function addFolder(dirHandle) {
-    const id = crypto.randomUUID();
-    const images = [];
-    for await (const [name, handle] of dirHandle.entries()) {
-        if (handle.kind === 'file') {
-            const ext = '.' + name.split('.').pop().toLowerCase();
-            if (IMAGE_EXTS.includes(ext)) {
-                images.push({ name, handle });
-            }
-        }
-    }
-    if (images.length === 0) {
-        alert(`文件夹 "${dirHandle.name}" 中没有找到图片文件`);
-        return;
-    }
-    images.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-    state.folders.push({ id, name: dirHandle.name, images, handle: dirHandle });
-    renderFolders();
-}
-
-// Electron mode: add comic folder via real filesystem path
 async function addComicFolder(dirPath, dirName) {
-    if (!window.ipcRenderer) return;
-
-    const result = await window.ipcRenderer.invoke('fs:list-images', dirPath);
-    const images = ipcData(result);
+    const images = await window.api.listImages(dirPath);
     if (!images || images.length === 0) {
         alert(`文件夹 "${dirName}" 中没有找到图片文件`);
         return;
@@ -395,12 +323,7 @@ async function addComicFolder(dirPath, dirName) {
     const imagesWithHandles = images.map(name => ({ name, path: dirPath + '/' + name }));
     imagesWithHandles.sort((a, b) => naturalSort(a.name, b.name));
 
-    state.folders.push({
-        id,
-        name: dirName,
-        images: imagesWithHandles,
-        path: dirPath,
-    });
+    state.folders.push({ id, name: dirName, images: imagesWithHandles, path: dirPath });
     renderFolders();
 }
 
@@ -461,35 +384,23 @@ function updateStartBtn() {
     const calibreFormats = ['pdf', 'epub', 'azw3', 'mobi'];
     const needsCalibre = state.selectedFormats.some(f => calibreFormats.includes(f));
     if (needsCalibre && !state.calibrePath) {
-        startBtn.title = '注意：所选格式需要 Calibre，当前未检测到。CBZ 会直接生成，其他格式可生成脚本稍后转换';
-    } else if (state.selectedFormats.includes('cbz')) {
-        startBtn.title = '';
+        startBtn.title = '所选格式需要 Calibre，当前未检测到。CBZ 可直接生成';
     } else {
-        startBtn.title = '注意：CBZ 可直接生成，其他格式需要 Calibre';
+        startBtn.title = '';
     }
 }
 
 // ═══════════════════════════════════════════
-// Output directory
+// Output directory (P2-01: via window.api)
 // ═══════════════════════════════════════════
 $('browseOutputBtn').addEventListener('click', async () => {
     try {
-        if (window.ipcRenderer) {
-            const result = await window.ipcRenderer.invoke('fs:open-directory');
-            const dir = ipcData(result);
-            if (dir) {
-                state._outputDirPath = dir.path;
-                outputPath.textContent = dir.path;
-                // Persist for next session
-                try { await window.ipcRenderer.invoke('fs:save-settings', { outputDir: dir.path }); } catch (_) {}
-            }
-            return;
+        const dir = await window.api.pickDir();
+        if (dir) {
+            state._outputDirPath = dir.path;
+            outputPath.textContent = dir.path;
+            await window.api.saveSettings({ outputDir: dir.path });
         }
-
-        // Browser fallback: use File System Access API
-        const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
-        state.outputDir = handle;
-        outputPath.textContent = handle.name;
     } catch (err) {
         if (err.name !== 'AbortError') console.error(err);
     }
@@ -509,7 +420,6 @@ async function startConversion() {
     state.results = [];
     updateStartBtn();
 
-    // Prepare tasks
     for (const folder of state.folders) {
         const subTasks = state.selectedFormats.map(f => ({ format: f, status: 'pending', progress: 0 }));
         state.tasks.push({
@@ -522,7 +432,6 @@ async function startConversion() {
     }
     renderProgress();
 
-    // Process sequentially (or could be parallel per folder)
     for (const task of state.tasks) {
         const folder = state.folders.find(f => f.id === task.id);
         if (!folder) continue;
@@ -531,7 +440,6 @@ async function startConversion() {
         renderProgress();
 
         try {
-            // Step 1: Pack CBZ
             const cbzSub = task.subTasks.find(s => s.format === 'cbz');
             if (cbzSub) {
                 cbzSub.status = 'running';
@@ -542,7 +450,6 @@ async function startConversion() {
                 renderProgress();
             }
 
-            // Step 2: Convert to other formats using Calibre
             for (const sub of task.subTasks) {
                 if (sub.format === 'cbz') continue;
                 if (!state.calibrePath) {
@@ -579,7 +486,7 @@ async function startConversion() {
 }
 
 // ═══════════════════════════════════════════
-// CBZ Packing (JSZip)
+// CBZ Packing (P2-01: via window.api)
 // ═══════════════════════════════════════════
 async function packCBZ(folder, task) {
     const zip = new JSZip();
@@ -589,21 +496,9 @@ async function packCBZ(folder, task) {
         const img = folder.images[i];
         const ext = img.name.split('.').pop();
         const newName = String(i + 1).padStart(padLen, '0') + '.' + ext;
-        let buffer;
 
-        if (folder.path && window.ipcRenderer) {
-            // Electron mode: read image via main process
-            const result = await window.ipcRenderer.invoke('fs:read-image', {
-                dirPath: folder.path,
-                fileName: img.name,
-            });
-            const base64 = ipcData(result);
-            buffer = Uint8Array.from(atob(base64), c => c.charCodeAt(0)).buffer;
-        } else {
-            // Browser mode: use FileSystemDirectoryHandle
-            const file = await img.handle.getFile();
-            buffer = await file.arrayBuffer();
-        }
+        const base64 = await window.api.readImage(folder.path, img.name);
+        const buffer = Uint8Array.from(atob(base64), c => c.charCodeAt(0)).buffer;
 
         zip.file(newName, buffer);
         const fmt = task.subTasks.find(s => s.format === 'cbz');
@@ -613,110 +508,57 @@ async function packCBZ(folder, task) {
     }
 
     const blob = await zip.generateAsync({ type: 'blob' });
-
-    // Save result
     const otherFormats = state.selectedFormats.filter(f => f !== 'cbz');
     state.results.push({ folderId: folder.id, name: `${folder.name}.cbz`, src: `${folder.name}.cbz`, blob, format: 'cbz', pendingCalibre: otherFormats.length > 0 });
 
-    // Save to output directory or trigger download
-    if (state.outputDir) {
-        // Browser mode: use File System Access API
-        const fileHandle = await state.outputDir.getFileHandle(`${folder.name}.cbz`, { create: true });
-        const writable = await fileHandle.createWritable();
-        await writable.write(blob);
-        await writable.close();
-    } else if (state._outputDirPath && window.ipcRenderer) {
-        // Electron mode: use main process to write file
-        const result = await window.ipcRenderer.invoke('fs:write-file', {
-            dirPath: state._outputDirPath,
-            fileName: `${folder.name}.cbz`,
-            arrayBuffer: await blob.arrayBuffer(),
-        });
-        const writeResult = ipcData(result);
+    if (state._outputDirPath) {
+        const writeResult = await window.api.writeFile(state._outputDirPath, `${folder.name}.cbz`, await blob.arrayBuffer());
         if (writeResult && writeResult.renamed) {
             console.log(`文件已重命名: ${writeResult.fileName}`);
         }
-    } else {
-        // Browser fallback: trigger download
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${folder.name}.cbz`;
-        a.click();
-        URL.revokeObjectURL(url);
     }
 }
 
 // ═══════════════════════════════════════════
-// Calibre Conversion (via generated script)
+// Calibre Conversion (P2-01: via window.api)
 // ═══════════════════════════════════════════
 async function convertWithCalibre(folder, task, subTask) {
-    // Try Electron IPC first (main process spawns ebook-convert directly)
-    if (window.ipcRenderer && window.ipcRenderer.invoke) {
-        if (!state._outputDirPath) {
-            throw new Error('请先选择输出目录');
-        }
-
-        try {
-            const result = await window.ipcRenderer.invoke('calibre:convert', {
-                exe: state.calibrePath,
-                outputDir: state._outputDirPath,
-                folderName: folder.name,
-                format: subTask.format,
-            });
-
-            // P1-06: unwrap IPC wrapper, then check conversion result
-            const convertResult = ipcData(result);
-            if (convertResult.renamed) {
-                console.log(`输出已重命名: ${convertResult.renamed}`);
-            }
-            if (!convertResult.ok) {
-                throw new Error(`Calibre 转换失败 (退出码 ${convertResult.exitCode})`);
-            }
-            return;
-        } catch (err) {
-            // Fall through to script generation fallback
-            console.warn('Electron IPC conversion failed, falling back:', err.message);
-        }
+    if (!state._outputDirPath) {
+        throw new Error('请先选择输出目录');
     }
 
-    // Fallback: browser mode — generate .bat script
-    const inputCbz = `${folder.name}.cbz`;
-    const outputFile = `${folder.name}.${subTask.format}`;
-    if (state.outputDir) {
-        const batContent = `@echo off\r\nchcp 65001 >nul\r\ncd /d "%~dp0"\r\n& "${state.calibrePath}" "${inputCbz}" "${outputFile}"\r\necho Done.\r\npause`;
-        try {
-            const fileHandle = await state.outputDir.getFileHandle(`_convert_${folder.name}.bat`, { create: true });
-            const writable = await fileHandle.createWritable();
-            await writable.write(new Blob([batContent], { type: 'text/plain' }));
-            await writable.close();
-        } catch (_) {}
+    const convertResult = await window.api.convertCalibre({
+        exe: state.calibrePath,
+        outputDir: state._outputDirPath,
+        folderName: folder.name,
+        format: subTask.format,
+    });
+
+    if (convertResult.renamed) {
+        console.log(`输出已重命名: ${convertResult.renamed}`);
     }
-    subTask.error = `浏览器无法直接调用 Calibre，已生成批处理脚本。`;
-    throw new Error(subTask.error);
+    if (!convertResult.ok) {
+        throw new Error(`Calibre 转换失败 (退出码 ${convertResult.exitCode})`);
+    }
 }
 
 // ═══════════════════════════════════════════
-// Electron IPC Progress Listener (real-time)
+// Progress Listeners (P2-01: via window.api)
 // ═══════════════════════════════════════════
-if (window.ipcRenderer && window.ipcRenderer.on) {
-    window.ipcRenderer.on('calibre:percent', (event, data) => {
-        // Update current running task progress
-        const runningTask = state.tasks.find(t => t.status === 'running');
-        if (runningTask) {
-            const runningSub = runningTask.subTasks.find(s => s.status === 'running');
-            if (runningSub) {
-                runningSub.progress = data.percent;
-                renderProgress();
-            }
+window.api.onCalibrePercent(data => {
+    const runningTask = state.tasks.find(t => t.status === 'running');
+    if (runningTask) {
+        const runningSub = runningTask.subTasks.find(s => s.status === 'running');
+        if (runningSub) {
+            runningSub.progress = data.percent;
+            renderProgress();
         }
-    });
+    }
+});
 
-    window.ipcRenderer.on('calibre:progress', (event, data) => {
-        // Could show log output in a console panel later
-        if (data.isError) console.error('[Calibre]', data.chunk);
-    });
-}
+window.api.onCalibreProgress(data => {
+    if (data.isError) console.error('[Calibre]', data.chunk);
+});
 
 // ═══════════════════════════════════════════
 // Render Progress
@@ -729,31 +571,23 @@ function renderProgress() {
     progressList.innerHTML = state.tasks.map(t => {
         const allDone = t.subTasks.every(s => s.status === 'done');
         const anyFailed = t.subTasks.some(s => s.status === 'failed');
-        let statusClass = 'pending';
-        let statusText = '等待';
+        let statusClass = 'pending', statusText = '等待';
         if (t.status === 'running') { statusClass = 'running'; statusText = '转换中'; }
         if (allDone) { statusClass = 'done'; statusText = '完成'; }
         if (anyFailed && t.status !== 'running') { statusClass = 'failed'; statusText = '部分失败'; }
         const overallProgress = t.subTasks.length > 0
             ? Math.round(t.subTasks.reduce((sum, s) => sum + s.progress, 0) / t.subTasks.length)
             : 0;
-
         return `
             <div class="progress-item">
                 <div class="progress-top">
-                    <div class="progress-name">
-                        <span>📖</span>
-                        <span>${escapeHtml(t.folderName)}</span>
-                    </div>
+                    <div class="progress-name"><span>📖</span><span>${escapeHtml(t.folderName)}</span></div>
                     <span class="status-tag ${statusClass}">${statusText}</span>
                 </div>
-                <div class="progress-track">
-                    <div class="progress-fill" style="width:${overallProgress}%;"></div>
-                </div>
+                <div class="progress-track"><div class="progress-fill" style="width:${overallProgress}%"></div></div>
                 <div class="format-tags">
                     ${t.subTasks.map(s => {
-                        let cls = '';
-                        let prefix = '';
+                        let cls = '', prefix = '';
                         if (s.status === 'done' && s.hint) { cls = 'warn'; prefix = '⏳'; }
                         else if (s.status === 'done') { cls = 'ok'; prefix = '✓'; }
                         else if (s.status === 'running') { cls = 'ing'; prefix = '↻'; }
@@ -762,29 +596,23 @@ function renderProgress() {
                 </div>
                 ${t.subTasks.filter(s => s.hint).map(s => `<div style="margin-top:4px;font-size:10px;color:#facc15;">⏳ ${escapeHtml(s.hint)}</div>`).join('')}
                 ${t.subTasks.filter(s => s.error).map(s => `<div style="margin-top:4px;font-size:10px;color:#ef4444;">⚠ ${escapeHtml(s.error)}</div>`).join('')}
-            </div>
-        `;
+            </div>`;
     }).join('');
 }
 
 // ═══════════════════════════════════════════
-// Bottom actions
+// Bottom actions (P2-01: via window.api)
 // ═══════════════════════════════════════════
 $('openDirBtn').addEventListener('click', () => {
-    // Electron: open output dir in native explorer
-    if (state._outputDirPath && window.ipcRenderer) {
-        window.ipcRenderer.invoke('fs:open-path', state._outputDirPath);
-        return;
-    }
-    if (state.outputDir) {
-        alert(`输出文件在: ${state.outputDir.name} 文件夹`);
+    if (state._outputDirPath) {
+        window.api.openPath(state._outputDirPath);
     } else {
         alert('请先选择输出目录');
     }
 });
 
 $('copyPathBtn').addEventListener('click', () => {
-    const src = state._outputDirPath || (state.outputDir ? state.outputDir.name : null);
+    const src = state._outputDirPath;
     if (!src) { alert('请先选择输出目录'); return; }
     navigator.clipboard.writeText(src).then(() => {
         const btn = $('copyPathBtn');
@@ -793,25 +621,19 @@ $('copyPathBtn').addEventListener('click', () => {
     });
 });
 
-// Init
+// ═══════════════════════════════════════════
+// Init (P2-01: no more ipcRenderer polling)
 // ═══════════════════════════════════════════
 (async () => {
-    // Poll for ipcRenderer (may be injected after page load by Electron main process)
-    for (let i = 0; i < 30 && !window.ipcRenderer; i++) {
-        await new Promise(r => setTimeout(r, 100));
-    }
     // Restore saved output directory
-    if (window.ipcRenderer) {
-        try {
-            const result = await window.ipcRenderer.invoke('fs:load-settings');
-            const settings = ipcData(result);
-            if (settings.outputDir) {
-                state._outputDirPath = settings.outputDir;
-                outputPath.textContent = settings.outputDir;
-            }
-        } catch (err) {
-            console.warn('Failed to restore output dir:', err.message);
+    try {
+        const settings = await window.api.loadSettings();
+        if (settings.outputDir) {
+            state._outputDirPath = settings.outputDir;
+            outputPath.textContent = settings.outputDir;
         }
+    } catch (err) {
+        console.warn('Failed to restore output dir:', err.message);
     }
     detectCalibre().finally(() => updateStartBtn());
 })();

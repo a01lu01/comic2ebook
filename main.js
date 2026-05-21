@@ -141,22 +141,13 @@ function createWindow() {
         minHeight: 600,
         title: 'Comic2Ebook',
         webPreferences: {
-            nodeIntegration: true,
-            contextIsolation: false,
-            webviewTag: true,
+            nodeIntegration: false,
+            contextIsolation: true,
+            preload: path.join(__dirname, 'preload.js'),
         },
     });
 
     mainWindow.loadFile('app.html');
-
-    mainWindow.webContents.on('did-finish-load', () => {
-        mainWindow.webContents.executeJavaScript(`
-            window.ipcRenderer = require('electron').ipcRenderer;
-            if (typeof detectCalibre === 'function') {
-                detectCalibre().finally(() => updateStartBtn());
-            }
-        `);
-    });
 }
 
 // ═══════════════════════════════════════════
