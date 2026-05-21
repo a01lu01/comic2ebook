@@ -67,7 +67,7 @@ const CALIBRE_PROFILES = {
             '--paper-size=a4',
             '--pdf-page-margin-top=0', '--pdf-page-margin-bottom=0',
             '--pdf-page-margin-left=0', '--pdf-page-margin-right=0',
-            '--pdf-add-toc=false', '--pdf-disable-kerning=true', '--pdf-default-font-size=0',
+            '--pdf-default-font-size=0',
         ],
         epub: [
             '--no-chapters-in-toc', '--prefer-metadata-cover',
