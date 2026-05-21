@@ -220,7 +220,7 @@
 </div>
 
 <!-- JSZip -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="vendor/jszip.min.js"></script>
 <script>
 // ═══════════════════════════════════════════
 // State
@@ -237,6 +237,40 @@ const state = {
 };
 const ALL_FORMATS = ['cbz', 'pdf', 'epub', 'azw3', 'mobi'];
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
+
+// ═══════════════════════════════════════════
+// Phase 1 Helpers
+// ═══════════════════════════════════════════
+
+// P1-06: Unwrap IPC {success, data/error} response
+function ipcData(result) {
+    if (!result || result.success === false) {
+        const err = result?.error;
+        const msg = err ? `[${err.code}] ${err.message}` : 'IPC call failed';
+        throw new Error(msg);
+    }
+    return result.data;
+}
+
+// P1-02: Natural sort
+function naturalSort(a, b) {
+    const re = /(\d+)|(\D+)/g;
+    const aParts = String(a).match(re) || [String(a)];
+    const bParts = String(b).match(re) || [String(b)];
+    for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
+        if (i >= aParts.length) return -1;
+        if (i >= bParts.length) return 1;
+        const aNum = parseInt(aParts[i], 10);
+        const bNum = parseInt(bParts[i], 10);
+        if (!isNaN(aNum) && !isNaN(bNum)) {
+            if (aNum !== bNum) return aNum - bNum;
+        } else {
+            const cmp = aParts[i].localeCompare(bParts[i]);
+            if (cmp !== 0) return cmp;
+        }
+    }
+    return 0;
+}
 
 // ═══════════════════════════════════════════
 // DOM refs
@@ -256,10 +290,10 @@ const formatCheckboxes = $('formatCheckboxes');
 // Calibre Detection
 // ═══════════════════════════════════════════
 async function detectCalibre() {
-    // With nodeIntegration: true, require('electron') is available immediately
     if (window.ipcRenderer) {
         try {
-            const calibrePath = await window.ipcRenderer.invoke('calibre:check');
+            const result = await window.ipcRenderer.invoke('calibre:check');
+            const calibrePath = ipcData(result);
             state.calibrePath = calibrePath;
             if (calibrePath) {
                 calibreDot.className = 'dot ok';
@@ -287,7 +321,8 @@ dropzone.addEventListener('click', async () => {
     // Electron mode: use main process dialog with multi-select
     if (window.ipcRenderer) {
         try {
-            const dirs = await window.ipcRenderer.invoke('fs:open-comic-directories');
+            const result = await window.ipcRenderer.invoke('fs:open-comic-directories');
+            const dirs = ipcData(result);
             if (!dirs || dirs.length === 0) return;
             for (const dir of dirs) {
                 await addComicFolder(dir.path, dir.name);
@@ -349,7 +384,8 @@ async function addFolder(dirHandle) {
 async function addComicFolder(dirPath, dirName) {
     if (!window.ipcRenderer) return;
 
-    const images = await window.ipcRenderer.invoke('fs:list-images', dirPath);
+    const result = await window.ipcRenderer.invoke('fs:list-images', dirPath);
+    const images = ipcData(result);
     if (!images || images.length === 0) {
         alert(`文件夹 "${dirName}" 中没有找到图片文件`);
         return;
@@ -357,13 +393,13 @@ async function addComicFolder(dirPath, dirName) {
 
     const id = crypto.randomUUID();
     const imagesWithHandles = images.map(name => ({ name, path: dirPath + '/' + name }));
-    imagesWithHandles.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    imagesWithHandles.sort((a, b) => naturalSort(a.name, b.name));
 
     state.folders.push({
         id,
         name: dirName,
         images: imagesWithHandles,
-        path: dirPath,  // Store real path for Electron
+        path: dirPath,
     });
     renderFolders();
 }
@@ -440,9 +476,10 @@ $('browseOutputBtn').addEventListener('click', async () => {
     try {
         if (window.ipcRenderer) {
             const result = await window.ipcRenderer.invoke('fs:open-directory');
-            if (result) {
-                state._outputDirPath = result.path;
-                outputPath.textContent = result.path;  // Show full path in Electron mode
+            const dir = ipcData(result);
+            if (dir) {
+                state._outputDirPath = dir.path;
+                outputPath.textContent = dir.path;
             }
             return;
         }
@@ -554,10 +591,11 @@ async function packCBZ(folder, task) {
 
         if (folder.path && window.ipcRenderer) {
             // Electron mode: read image via main process
-            const base64 = await window.ipcRenderer.invoke('fs:read-image', {
+            const result = await window.ipcRenderer.invoke('fs:read-image', {
                 dirPath: folder.path,
                 fileName: img.name,
             });
+            const base64 = ipcData(result);
             buffer = Uint8Array.from(atob(base64), c => c.charCodeAt(0)).buffer;
         } else {
             // Browser mode: use FileSystemDirectoryHandle
@@ -587,11 +625,15 @@ async function packCBZ(folder, task) {
         await writable.close();
     } else if (state._outputDirPath && window.ipcRenderer) {
         // Electron mode: use main process to write file
-        await window.ipcRenderer.invoke('fs:write-file', {
+        const result = await window.ipcRenderer.invoke('fs:write-file', {
             dirPath: state._outputDirPath,
             fileName: `${folder.name}.cbz`,
             arrayBuffer: await blob.arrayBuffer(),
         });
+        const writeResult = ipcData(result);
+        if (writeResult && writeResult.renamed) {
+            console.log(`文件已重命名: ${writeResult.fileName}`);
+        }
     } else {
         // Browser fallback: trigger download
         const url = URL.createObjectURL(blob);
@@ -621,8 +663,13 @@ async function convertWithCalibre(folder, task, subTask) {
                 format: subTask.format,
             });
 
-            if (!result.success) {
-                throw new Error(`Calibre 转换失败 (退出码 ${result.exitCode})`);
+            // P1-06: unwrap IPC wrapper, then check conversion result
+            const convertResult = ipcData(result);
+            if (convertResult.renamed) {
+                console.log(`输出已重命名: ${convertResult.renamed}`);
+            }
+            if (!convertResult.ok) {
+                throw new Error(`Calibre 转换失败 (退出码 ${convertResult.exitCode})`);
             }
             return;
         } catch (err) {
