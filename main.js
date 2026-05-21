@@ -11,10 +11,14 @@ const SETTINGS_FILE = path.join(app.getPath('userData'), 'settings.json');
 function loadSettings() {
     try {
         if (fs.existsSync(SETTINGS_FILE)) {
-            return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8'));
+            const raw = fs.readFileSync(SETTINGS_FILE, 'utf-8');
+            const parsed = JSON.parse(raw);
+            // Ensure schemaVersion is present
+            if (!parsed.schemaVersion) parsed.schemaVersion = 1;
+            return parsed;
         }
-    } catch (e) { /* ignore corrupt file */ }
-    return {};
+    } catch (e) { /* ignore corrupt file, return defaults */ }
+    return { schemaVersion: 1 };
 }
 
 function saveSettings(settings) {
