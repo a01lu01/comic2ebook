@@ -6,14 +6,16 @@ const fs = require('fs');
 // ═══════════════════════════════════════════
 // Settings persistence
 // ═══════════════════════════════════════════
-const SETTINGS_FILE = path.join(app.getPath('userData'), 'settings.json');
+function settingsPath() {
+    return path.join(app.getPath('userData'), 'settings.json');
+}
 
 function loadSettings() {
     try {
-        if (fs.existsSync(SETTINGS_FILE)) {
-            const raw = fs.readFileSync(SETTINGS_FILE, 'utf-8');
+        const p = settingsPath();
+        if (fs.existsSync(p)) {
+            const raw = fs.readFileSync(p, 'utf-8');
             const parsed = JSON.parse(raw);
-            // Ensure schemaVersion is present
             if (!parsed.schemaVersion) parsed.schemaVersion = 1;
             return parsed;
         }
@@ -22,12 +24,11 @@ function loadSettings() {
 }
 
 function saveSettings(settings) {
-    const dir = path.dirname(SETTINGS_FILE);
+    const p = settingsPath();
+    const dir = path.dirname(p);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+    fs.writeFileSync(p, JSON.stringify(settings, null, 2));
 }
-
-app.disableHardwareAcceleration();
 
 let mainWindow;
 
@@ -318,6 +319,17 @@ ipcMain.handle('fs:load-settings', ipcWrap(async () => {
 ipcMain.handle('fs:save-settings', ipcWrap(async (event, settings) => {
     saveSettings(settings);
     return true;
+}));
+
+ipcMain.handle('fs:pick-file', ipcWrap(async (event, { title, filters }) => {
+    const { dialog } = require('electron');
+    const result = await dialog.showOpenDialog(mainWindow, {
+        properties: ['openFile'],
+        title: title || '选择文件',
+        filters: filters || [{ name: 'All Files', extensions: ['*'] }],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
 }));
 
 app.whenReady().then(createWindow);

@@ -50,5 +50,6 @@ contextBridge.exposeInMainWorld('api', {
     // ── Settings ──
     loadSettings:       ()        => invoke('fs:load-settings'),
     saveSettings:       (settings) => invoke('fs:save-settings', settings),
+    pickFile:           (title, filters) => invoke('fs:pick-file', { title, filters }),
 
 });

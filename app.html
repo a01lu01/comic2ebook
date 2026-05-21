@@ -161,6 +161,7 @@
                 <span class="dot"></span>
                 <span id="calibreLabel">检测中…</span>
             </div>
+            <button class="btn" id="settingsBtn" title="设置">⚙</button>
         </div>
     </div>
     <div class="main">
@@ -219,6 +220,44 @@
     </div>
 </div>
 
+<!-- Settings Modal -->
+<div class="modal-overlay" id="settingsModal" style="display:none;">
+    <div class="modal" style="width:440px;">
+        <div class="modal-header">
+            <span class="modal-title">设置</span>
+            <button class="modal-close" id="settingsClose">&times;</button>
+        </div>
+        <div style="padding:16px;display:flex;flex-direction:column;gap:16px;">
+            <div>
+                <div class="setting-label">Calibre 路径</div>
+                <div class="path-row">
+                    <div class="path-display" id="settingsCalibreDisplay">自动检测</div>
+                    <button class="btn" id="settingsCalibreBrowse">浏览…</button>
+                </div>
+            </div>
+            <div>
+                <div class="setting-label">文件覆盖策略</div>
+                <div class="checkbox-row" id="overwritePolicyGroup">
+                    <label class="checkbox-pill"><input type="radio" name="overwritePolicy" value="rename" checked> 自动重命名</label>
+                    <label class="checkbox-pill"><input type="radio" name="overwritePolicy" value="overwrite"> 直接覆盖</label>
+                    <label class="checkbox-pill"><input type="radio" name="overwritePolicy" value="fail"> 报错终止</label>
+                </div>
+            </div>
+            <div>
+                <div class="setting-label">参数档位</div>
+                <div class="checkbox-row" id="profileGroup">
+                    <label class="checkbox-pill"><input type="radio" name="profile" value="recommended" checked> 推荐（最佳观感）</label>
+                    <label class="checkbox-pill"><input type="radio" name="profile" value="compatible"> 兼容（设备适配）</label>
+                </div>
+            </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;padding-top:8px;border-top:1px solid var(--stroke-2);">
+                <button class="btn" id="settingsCancel">取消</button>
+                <button class="btn btn-primary" id="settingsSave">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- JSZip -->
 <script src="vendor/jszip.min.js"></script>
 <script>
@@ -233,6 +272,8 @@ const state = {
     calibrePath: null,
     results: [],
     busy: false,
+    _settings: {},
+    _profile: 'recommended',
 };
 const ALL_FORMATS = ['cbz', 'pdf', 'epub', 'azw3', 'mobi'];
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
@@ -532,6 +573,7 @@ async function convertWithCalibre(folder, task, subTask) {
         outputDir: state._outputDirPath,
         folderName: folder.name,
         format: subTask.format,
+        profile: state._profile,
     });
 
     if (convertResult.renamed) {
@@ -622,18 +664,72 @@ $('copyPathBtn').addEventListener('click', () => {
 });
 
 // ═══════════════════════════════════════════
+// Settings Modal (P2-04)
+// ═══════════════════════════════════════════
+const settingsModal = $('settingsModal');
+const settingsCalibreDisplay = $('settingsCalibreDisplay');
+
+$('settingsBtn').addEventListener('click', async () => {
+    // Populate from current state
+    settingsCalibreDisplay.textContent = state.calibrePath || '自动检测';
+    const owPolicy = state._settings.overwritePolicy || 'rename';
+    document.querySelector('input[name="overwritePolicy"][value="' + owPolicy + '"]').checked = true;
+    const profile = state._settings.profile || 'recommended';
+    document.querySelector('input[name="profile"][value="' + profile + '"]').checked = true;
+    settingsModal.style.display = 'flex';
+});
+
+$('settingsClose').addEventListener('click', () => { settingsModal.style.display = 'none'; });
+$('settingsCancel').addEventListener('click', () => { settingsModal.style.display = 'none'; });
+
+$('settingsCalibreBrowse').addEventListener('click', async () => {
+    const filePath = await window.api.pickFile('选择 ebook-convert.exe', [{ name: '可执行文件', extensions: ['exe'] }]);
+    if (filePath) {
+        settingsCalibreDisplay.textContent = filePath;
+    }
+});
+
+$('settingsSave').addEventListener('click', async () => {
+    const calibrePath = settingsCalibreDisplay.textContent === '自动检测' ? '' : settingsCalibreDisplay.textContent;
+    const overwritePolicy = document.querySelector('input[name="overwritePolicy"]:checked').value;
+    const profile = document.querySelector('input[name="profile"]:checked').value;
+
+    const settings = { schemaVersion: 1, calibrePath, overwritePolicy, profile, outputDir: state._outputDirPath };
+    await window.api.saveSettings(settings);
+
+    // Apply immediately
+    state._settings = settings;
+    if (calibrePath) {
+        state.calibrePath = calibrePath;
+        calibreDot.className = 'dot ok';
+        calibreLabel.textContent = 'Calibre 已就绪';
+    }
+    state._profile = profile;
+    updateStartBtn();
+
+    settingsModal.style.display = 'none';
+});
+
+// ═══════════════════════════════════════════
 // Init (P2-01: no more ipcRenderer polling)
 // ═══════════════════════════════════════════
 (async () => {
-    // Restore saved output directory
+    // Restore saved settings
     try {
         const settings = await window.api.loadSettings();
+        state._settings = settings;
         if (settings.outputDir) {
             state._outputDirPath = settings.outputDir;
             outputPath.textContent = settings.outputDir;
         }
+        if (settings.calibrePath) {
+            state.calibrePath = settings.calibrePath;
+        }
+        if (settings.profile) {
+            state._profile = settings.profile;
+        }
     } catch (err) {
-        console.warn('Failed to restore output dir:', err.message);
+        console.warn('Failed to restore settings:', err.message);
     }
     detectCalibre().finally(() => updateStartBtn());
 })();
