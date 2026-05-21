@@ -61,7 +61,7 @@ const CALIBRE_PROFILES = {
     recommended: {
         common: [
             '--no-process', '--dont-grayscale', '--dont-normalize', '--dont-sharpen',
-            '--landscape', '--base-font-size', '0', '--remove-first-image',
+            '--landscape', '--base-font-size', '0',
         ],
         pdf: [
             '--paper-size=a4',
