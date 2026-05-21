@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
+const crypto = require('crypto');
 
 // ═══════════════════════════════════════════
 // Settings persistence
@@ -31,6 +32,7 @@ function saveSettings(settings) {
 }
 
 let mainWindow;
+const jobMap = new Map(); // P2-06: jobId -> { proc, logPath }
 
 // ═══════════════════════════════════════════
 // Phase 1 Utilities
@@ -254,58 +256,75 @@ ipcMain.handle('calibre:check', ipcWrap(async () => {
 }));
 
 // ═══════════════════════════════════════════
-// IPC: Calibre conversion (P1-03/04/05)
+// IPC: Calibre conversion (P2-06: job tracking + P2-07: log)
 // ═══════════════════════════════════════════
 ipcMain.handle('calibre:convert', ipcWrap(async (event, { exe, outputDir, folderName, format, profile = 'recommended' }) => {
-    // P1-03: sanitize folder name
+    const jobId = crypto.randomUUID();
     const safeName = sanitizeFilename(folderName);
     const srcPath = path.join(outputDir, `${safeName}.cbz`);
 
-    // P1-04: resolve output name (rename if conflict)
     const dstBase = `${safeName}.${format}`;
     const { resolvedName, renamed } = await resolveOutputPath(outputDir, dstBase);
     const dstPath = path.join(outputDir, resolvedName);
 
-    // P1-05: build args from profile
     const params = buildCalibreArgs(format, profile);
     const cmd = [srcPath, dstPath, ...params];
 
+    // P2-07: log file
+    const logsDir = path.join(app.getPath('userData'), 'logs');
+    if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
+    const logPath = path.join(logsDir, `${jobId}.log`);
+    const now = new Date().toISOString();
+    fs.writeFileSync(logPath, `# Comic2Ebook Calibre Log\n# Job: ${jobId}\n# Time: ${now}\n# Format: ${format}\n# Command: ${exe} ${cmd.join(' ')}\n\n`);
+
     return new Promise((resolve, reject) => {
         const proc = spawn(exe, cmd, { windowsHide: true });
+        jobMap.set(jobId, { proc, logPath, folderName, format }); // P2-06
 
         let progress = 0;
-        let logLines = [];
+        const logLines = [];
         const progressRegex = /(\d+)%/;
 
         proc.stdout.on('data', (data) => {
             const text = data.toString();
             logLines.push(text);
-            event.sender.send('calibre:progress', { chunk: text });
+            fs.appendFileSync(logPath, text);
+            event.sender.send('calibre:progress', { chunk: text, jobId });
             const match = text.match(progressRegex);
             if (match) {
                 progress = parseInt(match[1], 10);
-                event.sender.send('calibre:percent', { percent: progress });
+                event.sender.send('calibre:percent', { percent: progress, jobId });
             }
         });
 
         proc.stderr.on('data', (data) => {
             const text = data.toString();
             logLines.push(text);
-            event.sender.send('calibre:progress', { chunk: text, isError: true });
+            fs.appendFileSync(logPath, text);
+            event.sender.send('calibre:progress', { chunk: text, isError: true, jobId });
         });
 
         proc.on('close', (code) => {
+            jobMap.delete(jobId);
+            const summary = `\n# ExitCode: ${code}\n`;
+            fs.appendFileSync(logPath, summary);
             resolve({
+                jobId,
                 ok: code === 0,
                 exitCode: code,
                 progress: 100,
                 path: dstPath,
                 renamed: renamed ? resolvedName : null,
+                logPath,
                 logLines: logLines.join('\n'),
             });
         });
 
-        proc.on('error', (err) => reject(err));
+        proc.on('error', (err) => {
+            jobMap.delete(jobId);
+            fs.appendFileSync(logPath, `\n# Error: ${err.message}\n`);
+            reject(err);
+        });
     });
 }));
 
@@ -330,6 +349,33 @@ ipcMain.handle('fs:pick-file', ipcWrap(async (event, { title, filters }) => {
     });
     if (result.canceled || result.filePaths.length === 0) return null;
     return result.filePaths[0];
+}));
+
+// P2-06: Cancel a running conversion job
+ipcMain.handle('cancelJob', ipcWrap(async (event, jobId) => {
+    const entry = jobMap.get(jobId);
+    if (!entry) return { ok: false, reason: 'job not found' };
+    try {
+        entry.proc.kill();
+        fs.appendFileSync(entry.logPath, `\n# Cancelled by user\n`);
+    } catch (e) { /* process may already be dead */ }
+    jobMap.delete(jobId);
+    return { ok: true };
+}));
+
+// P2-07: Export log file for a job
+ipcMain.handle('exportLogs', ipcWrap(async (event, jobId) => {
+    const logsDir = path.join(app.getPath('userData'), 'logs');
+    const logPath = path.join(logsDir, `${jobId}.log`);
+    if (fs.existsSync(logPath)) {
+        return { path: logPath, content: fs.readFileSync(logPath, 'utf-8') };
+    }
+    // Try jobMap for in-progress jobs
+    const entry = jobMap.get(jobId);
+    if (entry) {
+        return { path: entry.logPath, content: fs.readFileSync(entry.logPath, 'utf-8') };
+    }
+    return null;
 }));
 
 app.whenReady().then(createWindow);

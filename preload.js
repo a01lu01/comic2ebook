@@ -52,4 +52,8 @@ contextBridge.exposeInMainWorld('api', {
     saveSettings:       (settings) => invoke('fs:save-settings', settings),
     pickFile:           (title, filters) => invoke('fs:pick-file', { title, filters }),
 
+    // ── Job control ──
+    cancelJob:          (jobId)   => invoke('cancelJob', jobId),
+    exportLogs:         (jobId)   => invoke('exportLogs', jobId),
+
 });
