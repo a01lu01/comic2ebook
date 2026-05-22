@@ -634,7 +634,7 @@ function renderProgress() {
         // P2-07: Export log button for done/failed tasks
         const logSubs = t.subTasks.filter(s => (s.status === 'done' || s.status === 'failed') && s.logPath);
         const logBtns = logSubs.map(s =>
-            `<button class="btn" onclick="exportLog('${s.logPath.replace(/'/g, "\\'")}')" style="margin-top:4px;font-size:10px;padding:2px 8px;">📄 ${s.format.toUpperCase()} 日志</button>`
+            `<button class="btn" onclick="exportLog('${s.logPath.replace(/\\/g, '/').replace(/'/g, "\\'")}')" style="margin-top:4px;font-size:10px;padding:2px 8px;">📄 ${s.format.toUpperCase()} 日志</button>`
         ).join(' ');
 
         return `
