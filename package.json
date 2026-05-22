@@ -9,6 +9,7 @@
     "electron": "^41.3.0"
   },
   "dependencies": {
-    "archiver": "^8.0.0"
+    "archiver": "^8.0.0",
+    "pngjs": "^7.0.0"
   }
 }

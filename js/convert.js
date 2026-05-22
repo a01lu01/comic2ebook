@@ -12,13 +12,12 @@ const CALIBRE_PROFILES = {
     recommended: {
         common: [
             '--no-process', '--dont-grayscale', '--dont-normalize', '--dont-sharpen',
-            '--landscape', '--base-font-size', '0',
+            '--landscape',
         ],
         pdf: [
             '--paper-size=a4',
             '--pdf-page-margin-top=0', '--pdf-page-margin-bottom=0',
             '--pdf-page-margin-left=0', '--pdf-page-margin-right=0',
-            '--pdf-default-font-size=0',
         ],
         epub: [
             '--no-chapters-in-toc', '--prefer-metadata-cover',
@@ -26,7 +25,7 @@ const CALIBRE_PROFILES = {
         ],
         mobi: [
             '--no-chapters-in-toc', '--prefer-metadata-cover',
-            '--mobi-keep-original-images', '--mobi-file-type=both',
+            '--mobi-keep-original-images', '--mobi-file-type=new',
         ],
         azw3: ['--no-chapters-in-toc', '--prefer-metadata-cover'],
     },
@@ -47,17 +46,16 @@ function buildCalibreArgs(format, profile = 'recommended') {
 /**
  * @returns {{ promise: Promise, proc: ChildProcess }}
  */
-async function convert(job, format, calibrePath, onProgress) {
+async function convert(job, format, calibrePath, cbzPath, onProgress) {
     const { comicName, outputDir, profile } = job;
     const safeName = fsSvc.sanitizeFilename(comicName);
-    const srcPath = path.join(outputDir, `${safeName}.cbz`);
 
     const dstBase = `${safeName}.${format}`;
     const { resolvedName, renamed } = await fsSvc.resolveOutputPath(outputDir, dstBase);
     const dstPath = path.join(outputDir, resolvedName);
 
     const params = buildCalibreArgs(format, profile);
-    const cmd = [srcPath, dstPath, ...params];
+    const cmd = [cbzPath, dstPath, ...params];
 
     const logPath = logSvc.createLog(safeName, format);
 
