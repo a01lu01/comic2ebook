@@ -137,6 +137,23 @@ async function resolveOutputPath(dirPath, baseName) {
     }
 }
 
+// P2-07: Log file pruning — keep max N log files
+const LOGS_DIR = path.join(__dirname, 'logs');
+const MAX_LOG_FILES = 100;
+
+function pruneLogs() {
+    try {
+        if (!fs.existsSync(LOGS_DIR)) return;
+        const files = fs.readdirSync(LOGS_DIR)
+            .filter(f => f.endsWith('.log'))
+            .map(f => ({ name: f, mtime: fs.statSync(path.join(LOGS_DIR, f)).mtime }))
+            .sort((a, b) => a.mtime - b.mtime);
+        while (files.length > MAX_LOG_FILES) {
+            fs.unlinkSync(path.join(LOGS_DIR, files.shift().name));
+        }
+    } catch (e) { /* ignore */ }
+}
+
 // ═══════════════════════════════════════════
 // Window
 // ═══════════════════════════════════════════
@@ -270,10 +287,11 @@ ipcMain.handle('calibre:convert', ipcWrap(async (event, { exe, outputDir, folder
     const params = buildCalibreArgs(format, profile);
     const cmd = [srcPath, dstPath, ...params];
 
-    // P2-07: log file
-    const logsDir = path.join(app.getPath('userData'), 'logs');
-    if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
-    const logPath = path.join(logsDir, `${jobId}.log`);
+    // P2-07: log file (project-root /logs/, human-readable name, max 100)
+    pruneLogs();
+    const ts = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '').replace('T', '-');
+    if (!fs.existsSync(LOGS_DIR)) fs.mkdirSync(LOGS_DIR, { recursive: true });
+    const logPath = path.join(LOGS_DIR, `${safeName}_${format}_${ts}.log`);
     const now = new Date().toISOString();
     fs.writeFileSync(logPath, `# Comic2Ebook Calibre Log\n# Job: ${jobId}\n# Time: ${now}\n# Format: ${format}\n# Command: ${exe} ${cmd.join(' ')}\n\n`);
 
@@ -363,17 +381,10 @@ ipcMain.handle('cancelJob', ipcWrap(async (event, jobId) => {
     return { ok: true };
 }));
 
-// P2-07: Export log file for a job
-ipcMain.handle('exportLogs', ipcWrap(async (event, jobId) => {
-    const logsDir = path.join(app.getPath('userData'), 'logs');
-    const logPath = path.join(logsDir, `${jobId}.log`);
+// P2-07: Export log file by path
+ipcMain.handle('exportLogs', ipcWrap(async (event, logPath) => {
     if (fs.existsSync(logPath)) {
         return { path: logPath, content: fs.readFileSync(logPath, 'utf-8') };
-    }
-    // Try jobMap for in-progress jobs
-    const entry = jobMap.get(jobId);
-    if (entry) {
-        return { path: entry.logPath, content: fs.readFileSync(entry.logPath, 'utf-8') };
     }
     return null;
 }));

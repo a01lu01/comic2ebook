@@ -54,6 +54,6 @@ contextBridge.exposeInMainWorld('api', {
 
     // ── Job control ──
     cancelJob:          (jobId)   => invoke('cancelJob', jobId),
-    exportLogs:         (jobId)   => invoke('exportLogs', jobId),
+    exportLogs:         (logPath) => invoke('exportLogs', logPath),
 
 });
