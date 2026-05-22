@@ -4,6 +4,10 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const crypto = require('crypto');
 
+// Phase 3 Service modules
+const fsSvc = require('./js/fs');
+const logSvc = require('./js/log');
+
 // ═══════════════════════════════════════════
 // Settings persistence
 // ═══════════════════════════════════════════
@@ -35,35 +39,8 @@ let mainWindow;
 const jobMap = new Map(); // P2-06: jobId -> { proc, logPath }
 
 // ═══════════════════════════════════════════
-// Phase 1 Utilities
+// Calibre conversion profiles
 // ═══════════════════════════════════════════
-
-// --- P1-02: Natural sort ("1.jpg" < "2.jpg" < "10.jpg") ---
-function naturalSort(a, b) {
-    const re = /(\d+)|(\D+)/g;
-    const aParts = String(a).match(re) || [String(a)];
-    const bParts = String(b).match(re) || [String(b)];
-    for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
-        if (i >= aParts.length) return -1;
-        if (i >= bParts.length) return 1;
-        const aNum = parseInt(aParts[i], 10);
-        const bNum = parseInt(bParts[i], 10);
-        if (!isNaN(aNum) && !isNaN(bNum)) {
-            if (aNum !== bNum) return aNum - bNum;
-        } else {
-            const cmp = aParts[i].localeCompare(bParts[i]);
-            if (cmp !== 0) return cmp;
-        }
-    }
-    return 0;
-}
-
-// --- P1-03: Sanitize Windows filename ---
-function sanitizeFilename(name) {
-    return name.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+$/, '');
-}
-
-// --- P1-05: Calibre conversion profiles ---
 const CALIBRE_PROFILES = {
     recommended: {
         common: [
@@ -119,41 +96,6 @@ function ipcWrap(fn) {
     };
 }
 
-// --- P1-04: Resolve output path with rename-on-conflict ---
-async function resolveOutputPath(dirPath, baseName) {
-    const ext = path.extname(baseName);
-    const stem = path.basename(baseName, ext);
-    let candidate = baseName;
-    let counter = 1;
-    while (true) {
-        const fullPath = path.join(dirPath, candidate);
-        try {
-            await fs.promises.access(fullPath);
-            candidate = `${stem} (${counter})${ext}`;
-            counter++;
-        } catch {
-            return { resolvedName: candidate, renamed: counter > 1 };
-        }
-    }
-}
-
-// P2-07: Log file pruning — keep max N log files
-const LOGS_DIR = path.join(__dirname, 'logs');
-const MAX_LOG_FILES = 100;
-
-function pruneLogs() {
-    try {
-        if (!fs.existsSync(LOGS_DIR)) return;
-        const files = fs.readdirSync(LOGS_DIR)
-            .filter(f => f.endsWith('.log'))
-            .map(f => ({ name: f, mtime: fs.statSync(path.join(LOGS_DIR, f)).mtime }))
-            .sort((a, b) => a.mtime - b.mtime);
-        while (files.length > MAX_LOG_FILES) {
-            fs.unlinkSync(path.join(LOGS_DIR, files.shift().name));
-        }
-    } catch (e) { /* ignore */ }
-}
-
 // ═══════════════════════════════════════════
 // Window
 // ═══════════════════════════════════════════
@@ -191,23 +133,17 @@ ipcMain.handle('fs:open-comic-directories', ipcWrap(async () => {
 }));
 
 // ═══════════════════════════════════════════
-// IPC: List images (P1-02: natural sort)
+// IPC: List images
 // ═══════════════════════════════════════════
 ipcMain.handle('fs:list-images', ipcWrap(async (event, dirPath) => {
-    const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
-    const files = await fs.promises.readdir(dirPath);
-    return files
-        .filter(f => IMAGE_EXTS.includes(path.extname(f).toLowerCase()))
-        .sort(naturalSort);
+    return fsSvc.listImages(dirPath);
 }));
 
 // ═══════════════════════════════════════════
 // IPC: Read image as base64
 // ═══════════════════════════════════════════
 ipcMain.handle('fs:read-image', ipcWrap(async (event, { dirPath, fileName }) => {
-    const filePath = path.join(dirPath, fileName);
-    const buffer = await fs.promises.readFile(filePath);
-    return buffer.toString('base64');
+    return fsSvc.readImageAsBase64(dirPath, fileName);
 }));
 
 // ═══════════════════════════════════════════
@@ -228,7 +164,7 @@ ipcMain.handle('fs:open-directory', ipcWrap(async () => {
 // IPC: Write file (P1-04: overwrite-safe)
 // ═══════════════════════════════════════════
 ipcMain.handle('fs:write-file', ipcWrap(async (event, { dirPath, fileName, arrayBuffer }) => {
-    const { resolvedName, renamed } = await resolveOutputPath(dirPath, fileName);
+    const { resolvedName, renamed } = await fsSvc.resolveOutputPath(dirPath, fileName);
     const filePath = path.join(dirPath, resolvedName);
     const buffer = Buffer.from(arrayBuffer.buffer || arrayBuffer);
     await fs.promises.writeFile(filePath, buffer);
@@ -277,23 +213,20 @@ ipcMain.handle('calibre:check', ipcWrap(async () => {
 // ═══════════════════════════════════════════
 ipcMain.handle('calibre:convert', ipcWrap(async (event, { exe, outputDir, folderName, format, profile = 'recommended' }) => {
     const jobId = crypto.randomUUID();
-    const safeName = sanitizeFilename(folderName);
+    const safeName = fsSvc.sanitizeFilename(folderName);
     const srcPath = path.join(outputDir, `${safeName}.cbz`);
 
     const dstBase = `${safeName}.${format}`;
-    const { resolvedName, renamed } = await resolveOutputPath(outputDir, dstBase);
+    const { resolvedName, renamed } = await fsSvc.resolveOutputPath(outputDir, dstBase);
     const dstPath = path.join(outputDir, resolvedName);
 
     const params = buildCalibreArgs(format, profile);
     const cmd = [srcPath, dstPath, ...params];
 
-    // P2-07: log file (project-root /logs/, human-readable name, max 100)
-    pruneLogs();
-    const ts = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '').replace('T', '-');
-    if (!fs.existsSync(LOGS_DIR)) fs.mkdirSync(LOGS_DIR, { recursive: true });
-    const logPath = path.join(LOGS_DIR, `${safeName}_${format}_${ts}.log`);
+    // P2-07: log file (delegated to logSvc)
+    const logPath = logSvc.createLog(safeName, format);
     const now = new Date().toISOString();
-    fs.writeFileSync(logPath, `# Comic2Ebook Calibre Log\n# Job: ${jobId}\n# Time: ${now}\n# Format: ${format}\n# Command: ${exe} ${cmd.join(' ')}\n\n`);
+    logSvc.appendLog(logPath, `# Job: ${jobId}\n# Command: ${exe} ${cmd.join(' ')}\n\n`);
 
     return new Promise((resolve, reject) => {
         const proc = spawn(exe, cmd, { windowsHide: true });
@@ -306,7 +239,7 @@ ipcMain.handle('calibre:convert', ipcWrap(async (event, { exe, outputDir, folder
         proc.stdout.on('data', (data) => {
             const text = data.toString();
             logLines.push(text);
-            fs.appendFileSync(logPath, text);
+            logSvc.appendLog(logPath, text);
             event.sender.send('calibre:progress', { chunk: text, jobId });
             const match = text.match(progressRegex);
             if (match) {
@@ -318,14 +251,14 @@ ipcMain.handle('calibre:convert', ipcWrap(async (event, { exe, outputDir, folder
         proc.stderr.on('data', (data) => {
             const text = data.toString();
             logLines.push(text);
-            fs.appendFileSync(logPath, text);
+            logSvc.appendLog(logPath, text);
             event.sender.send('calibre:progress', { chunk: text, isError: true, jobId });
         });
 
         proc.on('close', (code) => {
             jobMap.delete(jobId);
             const summary = `\n# ExitCode: ${code}\n`;
-            fs.appendFileSync(logPath, summary);
+            logSvc.appendLog(logPath, summary);
             resolve({
                 jobId,
                 ok: code === 0,
@@ -340,7 +273,7 @@ ipcMain.handle('calibre:convert', ipcWrap(async (event, { exe, outputDir, folder
 
         proc.on('error', (err) => {
             jobMap.delete(jobId);
-            fs.appendFileSync(logPath, `\n# Error: ${err.message}\n`);
+            logSvc.appendLog(logPath, `\n# Error: ${err.message}\n`);
             reject(err);
         });
     });
@@ -375,7 +308,7 @@ ipcMain.handle('cancelJob', ipcWrap(async (event, jobId) => {
     if (!entry) return { ok: false, reason: 'job not found' };
     try {
         entry.proc.kill();
-        fs.appendFileSync(entry.logPath, `\n# Cancelled by user\n`);
+        logSvc.appendLog(entry.logPath, `\n# Cancelled by user\n`);
     } catch (e) { /* process may already be dead */ }
     jobMap.delete(jobId);
     return { ok: true };
@@ -383,10 +316,8 @@ ipcMain.handle('cancelJob', ipcWrap(async (event, jobId) => {
 
 // P2-07: Export log file by path
 ipcMain.handle('exportLogs', ipcWrap(async (event, logPath) => {
-    if (fs.existsSync(logPath)) {
-        return { path: logPath, content: fs.readFileSync(logPath, 'utf-8') };
-    }
-    return null;
+    const content = logSvc.readLog(logPath);
+    return content ? { path: logPath, content } : null;
 }));
 
 app.whenReady().then(createWindow);
