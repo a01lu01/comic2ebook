@@ -1,12 +1,16 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
-const { spawn } = require('child_process');
 const fs = require('fs');
 const crypto = require('crypto');
 
 // Phase 3 Service modules
 const fsSvc = require('./js/fs');
 const logSvc = require('./js/log');
+const { Orchestrator, createJob } = require('./js/orchestrator');
+
+let mainWindow;
+let orchestrator;
+const jobMap = new Map(); // jobId → { proc, logPath }
 
 // ═══════════════════════════════════════════
 // Settings persistence
@@ -34,9 +38,6 @@ function saveSettings(settings) {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(p, JSON.stringify(settings, null, 2));
 }
-
-let mainWindow;
-const jobMap = new Map(); // P2-06: jobId -> { proc, logPath }
 
 // ═══════════════════════════════════════════
 // Calibre conversion profiles
@@ -114,6 +115,10 @@ function createWindow() {
     });
 
     mainWindow.loadFile('app.html');
+
+    // P3-07: Initialize Orchestrator
+    const settings = loadSettings();
+    orchestrator = new Orchestrator(mainWindow, settings);
 }
 
 // ═══════════════════════════════════════════
@@ -209,85 +214,44 @@ ipcMain.handle('calibre:check', ipcWrap(async () => {
 }));
 
 // ═══════════════════════════════════════════
-// IPC: Calibre conversion (P2-06: job tracking + P2-07: log)
+// IPC: Phase 3 — enqueue jobs via Orchestrator
 // ═══════════════════════════════════════════
-ipcMain.handle('calibre:convert', ipcWrap(async (event, { exe, outputDir, folderName, format, profile = 'recommended' }) => {
-    const jobId = crypto.randomUUID();
-    const safeName = fsSvc.sanitizeFilename(folderName);
-    const srcPath = path.join(outputDir, `${safeName}.cbz`);
-
-    const dstBase = `${safeName}.${format}`;
-    const { resolvedName, renamed } = await fsSvc.resolveOutputPath(outputDir, dstBase);
-    const dstPath = path.join(outputDir, resolvedName);
-
-    const params = buildCalibreArgs(format, profile);
-    const cmd = [srcPath, dstPath, ...params];
-
-    // P2-07: log file (delegated to logSvc)
-    const logPath = logSvc.createLog(safeName, format);
-    const now = new Date().toISOString();
-    logSvc.appendLog(logPath, `# Job: ${jobId}\n# Command: ${exe} ${cmd.join(' ')}\n\n`);
-
-    return new Promise((resolve, reject) => {
-        const proc = spawn(exe, cmd, { windowsHide: true });
-        jobMap.set(jobId, { proc, logPath, folderName, format }); // P2-06
-
-        let progress = 0;
-        const logLines = [];
-        const progressRegex = /(\d+)%/;
-
-        proc.stdout.on('data', (data) => {
-            const text = data.toString();
-            logLines.push(text);
-            logSvc.appendLog(logPath, text);
-            event.sender.send('calibre:progress', { chunk: text, jobId });
-            const match = text.match(progressRegex);
-            if (match) {
-                progress = parseInt(match[1], 10);
-                event.sender.send('calibre:percent', { percent: progress, jobId });
-            }
-        });
-
-        proc.stderr.on('data', (data) => {
-            const text = data.toString();
-            logLines.push(text);
-            logSvc.appendLog(logPath, text);
-            event.sender.send('calibre:progress', { chunk: text, isError: true, jobId });
-        });
-
-        proc.on('close', (code) => {
-            jobMap.delete(jobId);
-            const summary = `\n# ExitCode: ${code}\n`;
-            logSvc.appendLog(logPath, summary);
-            resolve({
-                jobId,
-                ok: code === 0,
-                exitCode: code,
-                progress: 100,
-                path: dstPath,
-                renamed: renamed ? resolvedName : null,
-                logPath,
-                logLines: logLines.join('\n'),
-            });
-        });
-
-        proc.on('error', (err) => {
-            jobMap.delete(jobId);
-            logSvc.appendLog(logPath, `\n# Error: ${err.message}\n`);
-            reject(err);
-        });
-    });
+ipcMain.handle('enqueueJobs', ipcWrap(async (event, jobs) => {
+    const settings = loadSettings();
+    const calibrePath = settings.calibrePath || (await detectCalibreInternal());
+    const jobDefs = jobs.map(j => createJob({
+        comicId: j.comicId,
+        comicName: j.comicName,
+        folderPath: j.folderPath,
+        outputDir: j.outputDir,
+        formats: j.formats,
+        profile: settings.profile || 'recommended',
+        calibrePath,
+    }));
+    orchestrator.enqueue(jobDefs);
+    return jobDefs.map(j => j.jobId);
 }));
 
-// ═══════════════════════════════════════════
-// IPC: Settings persistence
-// ═══════════════════════════════════════════
+// P2-06/3-07: Cancel a running job
+ipcMain.handle('cancelJob', ipcWrap(async (event, jobId) => {
+    return { ok: orchestrator.cancel(jobId) };
+}));
+
+// P3-08: Retry a failed job
+ipcMain.handle('retryJob', ipcWrap(async (event, jobId) => {
+    const newJobId = orchestrator.retry(jobId);
+    return newJobId ? { ok: true, jobId: newJobId } : { ok: false, reason: 'job not found' };
+}));
+
+// ── Settings / File / Log (unchanged) ──
+
 ipcMain.handle('fs:load-settings', ipcWrap(async () => {
     return loadSettings();
 }));
 
 ipcMain.handle('fs:save-settings', ipcWrap(async (event, settings) => {
     saveSettings(settings);
+    if (orchestrator) orchestrator.updateSettings(settings);
     return true;
 }));
 
@@ -302,23 +266,32 @@ ipcMain.handle('fs:pick-file', ipcWrap(async (event, { title, filters }) => {
     return result.filePaths[0];
 }));
 
-// P2-06: Cancel a running conversion job
-ipcMain.handle('cancelJob', ipcWrap(async (event, jobId) => {
-    const entry = jobMap.get(jobId);
-    if (!entry) return { ok: false, reason: 'job not found' };
-    try {
-        entry.proc.kill();
-        logSvc.appendLog(entry.logPath, `\n# Cancelled by user\n`);
-    } catch (e) { /* process may already be dead */ }
-    jobMap.delete(jobId);
-    return { ok: true };
-}));
-
-// P2-07: Export log file by path
 ipcMain.handle('exportLogs', ipcWrap(async (event, logPath) => {
     const content = logSvc.readLog(logPath);
     return content ? { path: logPath, content } : null;
 }));
+
+// Internal Calibre detection (extracted for enqueueJobs)
+async function detectCalibreInternal() {
+    const { execFile } = require('child_process');
+    const possiblePaths = [
+        'ebook-convert',
+        path.join(process.env.APPDATA, 'Calibre2/ebook-convert.exe'),
+        path.join(process.env.LOCALAPPDATA, 'Programs/Calibre/ebook-convert.exe'),
+        path.join('C:\\Program Files\\Calibre2\\ebook-convert.exe'),
+        path.join('C:\\Program Files (x86)\\Calibre2\\ebook-convert.exe'),
+    ];
+    function tryPath(idx) {
+        return new Promise((resolve) => {
+            if (idx >= possiblePaths.length) { resolve(null); return; }
+            execFile(possiblePaths[idx], ['--version'], { timeout: 5000 }, (err, stdout) => {
+                if (!err && stdout && stdout.includes('calibre')) resolve(possiblePaths[idx]);
+                else resolve(tryPath(idx + 1));
+            });
+        });
+    }
+    return tryPath(0);
+}
 
 app.whenReady().then(createWindow);
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

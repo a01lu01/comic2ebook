@@ -455,154 +455,73 @@ startBtn.addEventListener('click', startConversion);
 async function startConversion() {
     if (state.folders.length === 0 || state.selectedFormats.length === 0) return;
     if (state.busy) return;
+    if (!state._outputDirPath) { alert('请先选择输出目录'); return; }
 
     state.busy = true;
     state.tasks = [];
-    state.results = [];
     updateStartBtn();
 
-    for (const folder of state.folders) {
-        const subTasks = state.selectedFormats.map(f => ({ format: f, status: 'pending', progress: 0 }));
+    // Build job definitions for Orchestrator
+    const jobs = state.folders.map(f => ({
+        comicId: f.id,
+        comicName: f.name,
+        folderPath: f.path,
+        outputDir: state._outputDirPath,
+        formats: state.selectedFormats,
+    }));
+
+    const jobIds = await window.api.enqueueJobs(jobs);
+
+    // Create initial local task entries
+    jobIds.forEach((jobId, i) => {
         state.tasks.push({
-            id: folder.id,
-            folderName: folder.name,
-            status: 'pending',
-            progress: 0,
-            subTasks,
+            jobId,
+            folderName: state.folders[i].name,
+            status: 'queued',
+            subTasks: state.selectedFormats.map(f => ({ format: f, status: 'pending', progress: 0 })),
+        });
+    });
+    renderProgress();
+}
+
+// ═══════════════════════════════════════════
+// Progress Listeners (P3-02: unified events)
+// ═══════════════════════════════════════════
+window.api.onJobUpdate(data => {
+    const task = state.tasks.find(t => t.jobId === data.jobId);
+    if (!task) return;
+    task.status = data.status;
+    if (data.subTasks) {
+        data.subTasks.forEach(up => {
+            const sub = task.subTasks.find(s => s.format === up.format);
+            if (sub) {
+                if (up.status) sub.status = up.status;
+                if (up.progress != null) sub.progress = up.progress;
+                if (up.error) sub.error = up.error;
+            }
         });
     }
+    if (data.error) task.error = data.error;
     renderProgress();
-
-    for (const task of state.tasks) {
-        const folder = state.folders.find(f => f.id === task.id);
-        if (!folder) continue;
-
-        task.status = 'running';
-        renderProgress();
-
-        try {
-            const cbzSub = task.subTasks.find(s => s.format === 'cbz');
-            if (cbzSub) {
-                cbzSub.status = 'running';
-                renderProgress();
-                await packCBZ(folder, task);
-                cbzSub.status = 'done';
-                cbzSub.progress = 100;
-                renderProgress();
-            }
-
-            for (const sub of task.subTasks) {
-                if (sub.format === 'cbz') continue;
-                if (!state.calibrePath) {
-                    sub.status = 'done';
-                    sub.progress = 100;
-                    sub.hint = '待脚本转换';
-                    continue;
-                }
-                sub.status = 'running';
-                sub.jobId = null;
-                renderProgress();
-                try {
-                    const result = await convertWithCalibre(folder, task, sub);
-                    sub.status = 'done';
-                    sub.progress = 100;
-                    sub.jobId = result.jobId;
-                    sub.logPath = result.logPath;
-                } catch (err) {
-                    sub.status = 'failed';
-                    sub.error = err.message;
-                }
-                renderProgress();
-            }
-
-            task.status = 'done';
-            task.progress = 100;
-        } catch (err) {
-            task.status = 'failed';
-            task.error = err.message;
-        }
-        renderProgress();
-    }
-
-    state.busy = false;
-    updateStartBtn();
-    renderProgress();
-}
-
-// ═══════════════════════════════════════════
-// CBZ Packing (P2-01: via window.api)
-// ═══════════════════════════════════════════
-async function packCBZ(folder, task) {
-    const zip = new JSZip();
-    const padLen = String(folder.images.length).length;
-
-    for (let i = 0; i < folder.images.length; i++) {
-        const img = folder.images[i];
-        const ext = img.name.split('.').pop();
-        const newName = String(i + 1).padStart(padLen, '0') + '.' + ext;
-
-        const base64 = await window.api.readImage(folder.path, img.name);
-        const buffer = Uint8Array.from(atob(base64), c => c.charCodeAt(0)).buffer;
-
-        zip.file(newName, buffer);
-        const fmt = task.subTasks.find(s => s.format === 'cbz');
-        if (fmt) fmt.progress = Math.round(((i + 1) / folder.images.length) * 100);
-        task.progress = Math.round((i + 1) / folder.images.length * 100);
-        if (i % 10 === 0) renderProgress();
-    }
-
-    const blob = await zip.generateAsync({ type: 'blob' });
-    const otherFormats = state.selectedFormats.filter(f => f !== 'cbz');
-    state.results.push({ folderId: folder.id, name: `${folder.name}.cbz`, src: `${folder.name}.cbz`, blob, format: 'cbz', pendingCalibre: otherFormats.length > 0 });
-
-    if (state._outputDirPath) {
-        const writeResult = await window.api.writeFile(state._outputDirPath, `${folder.name}.cbz`, await blob.arrayBuffer());
-        if (writeResult && writeResult.renamed) {
-            console.log(`文件已重命名: ${writeResult.fileName}`);
-        }
-    }
-}
-
-// ═══════════════════════════════════════════
-// Calibre Conversion (P2-01: via window.api)
-// ═══════════════════════════════════════════
-async function convertWithCalibre(folder, task, subTask) {
-    if (!state._outputDirPath) {
-        throw new Error('请先选择输出目录');
-    }
-
-    const convertResult = await window.api.convertCalibre({
-        exe: state.calibrePath,
-        outputDir: state._outputDirPath,
-        folderName: folder.name,
-        format: subTask.format,
-        profile: state._profile,
-    });
-
-    if (convertResult.renamed) {
-        console.log(`输出已重命名: ${convertResult.renamed}`);
-    }
-    if (!convertResult.ok) {
-        throw new Error(`Calibre 转换失败 (退出码 ${convertResult.exitCode})`);
-    }
-    return convertResult;
-}
-
-// ═══════════════════════════════════════════
-// Progress Listeners (P2-01: via window.api)
-// ═══════════════════════════════════════════
-window.api.onCalibrePercent(data => {
-    const runningTask = state.tasks.find(t => t.status === 'running');
-    if (runningTask) {
-        const runningSub = runningTask.subTasks.find(s => s.status === 'running');
-        if (runningSub) {
-            runningSub.progress = data.percent;
-            renderProgress();
-        }
-    }
 });
 
-window.api.onCalibreProgress(data => {
+window.api.onJobResult(data => {
+    const task = state.tasks.find(t => t.jobId === data.jobId);
+    if (!task) return;
+    task.status = data.status;
+    task._results = data.results; // store for log export
+    if (data.error) task.error = data.error;
+
+    // Check if all tasks done
+    const allDone = state.tasks.every(t => t.status === 'done' || t.status === 'failed' || t.status === 'cancelled');
+    if (allDone) {
+        state.busy = false;
+        updateStartBtn();
+    }
+    renderProgress();
+});
+
+window.api.onJobLog(data => {
     if (data.isError) console.error('[Calibre]', data.chunk);
 });
 
@@ -617,24 +536,34 @@ function renderProgress() {
     progressList.innerHTML = state.tasks.map(t => {
         const allDone = t.subTasks.every(s => s.status === 'done');
         const anyFailed = t.subTasks.some(s => s.status === 'failed');
-        let statusClass = 'pending', statusText = '等待';
-        if (t.status === 'running') { statusClass = 'running'; statusText = '转换中'; }
+        let statusClass = 'pending', statusText = '排队中';
+        if (t.status === 'packing' || t.status === 'converting' || t.status === 'running') {
+            statusClass = 'running'; statusText = '转换中';
+        }
+        if (t.status === 'cancelled') { statusClass = 'failed'; statusText = '已取消'; }
         if (allDone) { statusClass = 'done'; statusText = '完成'; }
-        if (anyFailed && t.status !== 'running') { statusClass = 'failed'; statusText = '部分失败'; }
+        if (anyFailed && t.status !== 'running' && t.status !== 'packing' && t.status !== 'converting') {
+            statusClass = 'failed'; statusText = '部分失败';
+        }
         const overallProgress = t.subTasks.length > 0
             ? Math.round(t.subTasks.reduce((sum, s) => sum + s.progress, 0) / t.subTasks.length)
             : 0;
 
-        // P2-06: Cancel button for running Calibre conversion
-        const runningSub = t.subTasks.find(s => s.status === 'running' && s.jobId);
-        const cancelBtn = runningSub
-            ? `<button class="btn" onclick="cancelJob('${runningSub.jobId}')" style="margin-top:6px;font-size:11px;padding:4px 10px;">✕ 取消转换</button>`
+        // Cancel button for active jobs
+        const isActive = t.status === 'packing' || t.status === 'converting' || t.status === 'running';
+        const cancelBtn = isActive
+            ? `<button class="btn" onclick="cancelJob('${t.jobId}')" style="margin-top:6px;font-size:11px;padding:4px 10px;">✕ 取消</button>`
             : '';
 
-        // P2-07: Export log button for done/failed tasks
-        const logSubs = t.subTasks.filter(s => (s.status === 'done' || s.status === 'failed') && s.logPath);
-        const logBtns = logSubs.map(s =>
-            `<button class="btn" onclick="exportLog('${s.logPath.replace(/\\/g, '/').replace(/'/g, "\\'")}')" style="margin-top:4px;font-size:10px;padding:2px 8px;">📄 ${s.format.toUpperCase()} 日志</button>`
+        // Retry button for failed jobs
+        const retryBtn = (t.status === 'failed')
+            ? `<button class="btn" onclick="retryJob('${t.jobId}')" style="margin-top:6px;font-size:11px;padding:4px 10px;">↻ 重试</button>`
+            : '';
+
+        // Export log — from _results
+        const results = t._results || [];
+        const logBtns = results.filter(r => r.logPath).map(r =>
+            `<button class="btn" onclick="exportLog('${r.logPath.replace(/\\/g, '/').replace(/'/g, "\\'")}')" style="margin-top:4px;font-size:10px;padding:2px 8px;">📄 ${r.format.toUpperCase()} 日志</button>`
         ).join(' ');
 
         return `
@@ -647,36 +576,23 @@ function renderProgress() {
                 <div class="format-tags">
                     ${t.subTasks.map(s => {
                         let cls = '', prefix = '';
-                        if (s.status === 'done' && s.hint) { cls = 'warn'; prefix = '⏳'; }
-                        else if (s.status === 'done') { cls = 'ok'; prefix = '✓'; }
+                        if (s.status === 'done') { cls = 'ok'; prefix = '✓'; }
                         else if (s.status === 'running') { cls = 'ing'; prefix = '↻'; }
+                        else if (s.status === 'failed') { cls = 'warn'; prefix = '✗'; }
                         return `<span class="format-tag ${cls}">${prefix} ${s.format.toUpperCase()}</span>`;
                     }).join('')}
                 </div>
-                ${t.subTasks.filter(s => s.hint).map(s => `<div style="margin-top:4px;font-size:10px;color:#facc15;">⏳ ${escapeHtml(s.hint)}</div>`).join('')}
                 ${t.subTasks.filter(s => s.error).map(s => `<div style="margin-top:4px;font-size:10px;color:#ef4444;">⚠ ${escapeHtml(s.error)}</div>`).join('')}
                 ${cancelBtn}
+                ${retryBtn}
                 ${logBtns}
             </div>`;
     }).join('');
 }
 
-// P2-06: Cancel a running conversion
+// P3-07: Cancel a running job
 async function cancelJob(jobId) {
     await window.api.cancelJob(jobId);
-    // Find and mark the sub-task as cancelled
-    for (const t of state.tasks) {
-        const sub = t.subTasks.find(s => s.jobId === jobId && s.status === 'running');
-        if (sub) {
-            sub.status = 'failed';
-            sub.error = '用户取消';
-            if (t.subTasks.every(s => s.status !== 'running')) {
-                t.status = 'done';
-            }
-            renderProgress();
-            return;
-        }
-    }
 }
 
 // P2-07: Export job log

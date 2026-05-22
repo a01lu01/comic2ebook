@@ -52,8 +52,28 @@ contextBridge.exposeInMainWorld('api', {
     saveSettings:       (settings) => invoke('fs:save-settings', settings),
     pickFile:           (title, filters) => invoke('fs:pick-file', { title, filters }),
 
-    // ── Job control ──
+    // ── Job control (Phase 3) ──
+    enqueueJobs:        (jobs)    => invoke('enqueueJobs', jobs),
     cancelJob:          (jobId)   => invoke('cancelJob', jobId),
+    retryJob:           (jobId)   => invoke('retryJob', jobId),
     exportLogs:         (logPath) => invoke('exportLogs', logPath),
+
+    onJobUpdate(callback) {
+        const handler = (_event, data) => callback(data);
+        ipcRenderer.on('job:update', handler);
+        return () => ipcRenderer.removeListener('job:update', handler);
+    },
+
+    onJobResult(callback) {
+        const handler = (_event, data) => callback(data);
+        ipcRenderer.on('job:result', handler);
+        return () => ipcRenderer.removeListener('job:result', handler);
+    },
+
+    onJobLog(callback) {
+        const handler = (_event, data) => callback(data);
+        ipcRenderer.on('job:log', handler);
+        return () => ipcRenderer.removeListener('job:log', handler);
+    },
 
 });
