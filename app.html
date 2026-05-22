@@ -146,6 +146,8 @@
     .modal-title { font-size: 14px; font-weight: 600; }
     .modal-close { background: none; border: none; color: var(--quiet); font-size: 20px; cursor: pointer; padding: 0; line-height: 1; }
     .modal-close:hover { color: var(--fg); }
+    .conc-select { padding: 4px 8px; background: var(--comp-bg); border: 1px solid var(--stroke); border-radius: var(--radius-6); color: var(--text); font-size: 12px; font-family: var(--ui); cursor: pointer; }
+    .conc-select:focus { outline: none; border-color: var(--accent); }
     </style>
 </head>
 <body>
@@ -248,6 +250,29 @@
                 <div class="checkbox-row" id="profileGroup">
                     <label class="checkbox-pill"><input type="radio" name="profile" value="recommended" checked> 推荐（最佳观感）</label>
                     <label class="checkbox-pill"><input type="radio" name="profile" value="compatible"> 兼容（设备适配）</label>
+                </div>
+            </div>
+            <div>
+                <div class="setting-label">并发数（重启后生效）</div>
+                <div style="display:flex;gap:16px;">
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <span style="font-size:12px;color:var(--muted);">打包</span>
+                        <select id="settingsPackingConc" class="conc-select">
+                            <option value="1">1</option>
+                            <option value="2" selected>2</option>
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                            <option value="5">5</option>
+                        </select>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <span style="font-size:12px;color:var(--muted);">转换</span>
+                        <select id="settingsConvertConc" class="conc-select">
+                            <option value="1" selected>1</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                        </select>
+                    </div>
                 </div>
             </div>
             <div style="display:flex;gap:8px;justify-content:flex-end;padding-top:8px;border-top:1px solid var(--stroke-2);">
@@ -639,6 +664,8 @@ $('settingsBtn').addEventListener('click', async () => {
     document.querySelector('input[name="overwritePolicy"][value="' + owPolicy + '"]').checked = true;
     const profile = state._settings.profile || 'recommended';
     document.querySelector('input[name="profile"][value="' + profile + '"]').checked = true;
+    $('settingsPackingConc').value = state._settings.packingConcurrency || 2;
+    $('settingsConvertConc').value = state._settings.convertConcurrency || 1;
     settingsModal.style.display = 'flex';
 });
 
@@ -656,8 +683,10 @@ $('settingsSave').addEventListener('click', async () => {
     const calibrePath = settingsCalibreDisplay.textContent === '自动检测' ? '' : settingsCalibreDisplay.textContent;
     const overwritePolicy = document.querySelector('input[name="overwritePolicy"]:checked').value;
     const profile = document.querySelector('input[name="profile"]:checked').value;
+    const packingConcurrency = parseInt($('settingsPackingConc').value);
+    const convertConcurrency = parseInt($('settingsConvertConc').value);
 
-    const settings = { schemaVersion: 1, calibrePath, overwritePolicy, profile, outputDir: state._outputDirPath };
+    const settings = { schemaVersion: 1, calibrePath, overwritePolicy, profile, packingConcurrency, convertConcurrency, outputDir: state._outputDirPath };
     await window.api.saveSettings(settings);
 
     // Apply immediately
