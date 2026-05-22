@@ -96,12 +96,12 @@ class Orchestrator {
     }
 
     _tickPacking() {
-        const packingCount = this._countByStage('packing');
-        while (packingCount + this._countByAsync('packing') < this.maxPacking && this.queue.length > 0) {
+        while (this._countByStage('packing') < this.maxPacking && this.queue.length > 0) {
             const job = this.queue.shift();
             if (!job.formats.includes('cbz')) {
-                // No CBZ needed, go straight to converting
+                // No CBZ needed — add to active and let _tickConverting pick up
                 job.status = 'converting';
+                this.active.set(job.jobId, { job, proc: null });
                 this._sendUpdate(job);
                 this._tickConverting();
                 return;
@@ -113,17 +113,23 @@ class Orchestrator {
     }
 
     _tickConverting() {
-        const convertingCount = this._countByStage('converting');
-        while (convertingCount + this._countByAsync('converting') < this.maxConverting) {
-            // Find a job that's done packing and has pending formats
-            const ready = [...this.active.values()].find(e =>
-                e.job.status === 'converting' &&
-                e.job.subTasks.some(s => s.format !== 'cbz' && s.status === 'pending')
-            );
+        while (this._countByStage('converting') < this.maxConverting) {
+            // Find a job in active that has CBZ done and pending calibre formats
+            const ready = [...this.active.values()].find(e => {
+                const job = e.job;
+                return job.status === 'packing' && // still in packing state = CBZ done
+                       job.results.some(r => r.format === 'cbz') &&
+                       job.subTasks.some(s => s.format !== 'cbz' && s.status === 'pending');
+            }) || [...this.active.values()].find(e => {
+                // Or a queued job with no CBZ format
+                const job = e.job;
+                return job.status === 'converting' &&
+                       job.subTasks.some(s => s.format !== 'cbz' && s.status === 'pending');
+            });
             if (!ready) break;
             const sub = ready.job.subTasks.find(s => s.format !== 'cbz' && s.status === 'pending');
+            ready.job.status = 'converting';
             this._runConverting(ready.job, sub);
-            break;
         }
     }
 
@@ -147,16 +153,19 @@ class Orchestrator {
             }
             job.results.push(result);
 
-            // Move to converting stage
             const hasMoreFormats = job.subTasks.some(s => s.format !== 'cbz' && s.status === 'pending');
-            job.status = hasMoreFormats ? 'converting' : 'done';
-            if (job.status === 'done') {
+            if (hasMoreFormats) {
+                // Stay in 'packing' status — _tickConverting will pick it up
+                this._sendUpdate(job);
+                this._tick();
+            } else {
+                job.status = 'done';
                 job.finishedAt = Date.now();
                 this.active.delete(job.jobId);
                 this.results.set(job.jobId, job);
                 this._sendResult(job);
+                this._tick();
             }
-            this._sendUpdate(job);
         } catch (err) {
             job.status = 'failed';
             job.error = err.message;
@@ -165,8 +174,8 @@ class Orchestrator {
             this.active.delete(job.jobId);
             this.results.set(job.jobId, job);
             this._sendUpdate(job);
+            this._tick();
         }
-        this._tick();
     }
 
     async _runConverting(job, sub) {
@@ -242,21 +251,6 @@ class Orchestrator {
 
     _countByStage(stage) {
         return [...this.active.values()].filter(e => e.job.status === stage).length;
-    }
-
-    _countByAsync(stage) {
-        // Count jobs that are in the async pack/convert process
-        if (stage === 'packing') {
-            // packing jobs that already have an entry but haven't completed
-            const packing = [...this.active.values()].filter(e =>
-                e.job.status === 'packing'
-            );
-            return packing.length;
-        }
-        // converting: jobs already in the async convert
-        return [...this.active.values()].filter(e =>
-            e.job.status === 'converting' && !e.job.finishedAt
-        ).length;
     }
 }
 
