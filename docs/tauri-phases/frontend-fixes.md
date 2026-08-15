@@ -245,3 +245,15 @@ npm run tauri build → 成功
 - 不勾选 CBZ 时，内部在系统临时目录生成临时 CBZ，Calibre 直接转换 AZW3 / MOBI / PDF / EPUB。
 - 转换完成、取消或清空时自动删除临时 CBZ。
 - 新增临时 CBZ 生成与真实 Calibre AZW3 端到端测试。
+
+---
+
+# 第十次修复：临时 CBZ 提前删除导致后续格式失败（完成）
+
+状态：✅ 完成
+日期：2026-08-16
+
+- 症状：不勾选 CBZ 时，AZW3 成功但 MOBI 失败，报 `Cannot read from ...cbz`。
+- 根因：`finish_conversion` 在单个格式结束后就执行临时 CBZ 清理，未等全部格式完成。
+- 修复：清理逻辑移入任务终态分支，只有没有 running / pending 子任务时才删除临时 CBZ。
+- 验证：`cargo test` 13/13 通过；真实 Calibre AZW3 直转测试通过。

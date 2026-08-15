@@ -503,10 +503,10 @@ impl JobManager {
                 Some(active.job.clone())
             }
         };
-        if let Some(path) = temp_cbz {
-            cleanup_temp_file(&path);
-        }
         if let Some(job) = finished {
+            if let Some(path) = temp_cbz {
+                cleanup_temp_file(&path);
+            }
             self.finalize_job(job);
         }
         self.tick();
@@ -763,4 +763,5 @@ mod tests {
         cleanup_temp_file(&temp_cbz);
         std::fs::remove_dir_all(&dir).unwrap();
     }
+
 }
