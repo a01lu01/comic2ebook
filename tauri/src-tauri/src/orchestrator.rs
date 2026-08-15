@@ -63,9 +63,12 @@ impl JobManager {
     }
 
     pub fn update_settings(&self, settings: &Settings) {
-        let mut g = self.inner.lock().unwrap();
-        g.max_packing = settings.packing_concurrency.max(1) as usize;
-        g.max_converting = settings.convert_concurrency.max(1) as usize;
+        {
+            let mut g = self.inner.lock().unwrap();
+            g.max_packing = settings.packing_concurrency.max(1) as usize;
+            g.max_converting = settings.convert_concurrency.max(1) as usize;
+        }
+        self.tick();
     }
 
     pub fn enqueue(
@@ -408,6 +411,25 @@ impl JobManager {
                     }
                 }
             }
+            let cbz_failed = active.job.error.is_some()
+                || active
+                    .job
+                    .sub_tasks
+                    .iter()
+                    .any(|s| s.format == "cbz" && s.status == SubTaskStatus::Failed);
+            if cbz_failed {
+                let msg = active
+                    .job
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "CBZ 打包失败".to_string());
+                for sub in active.job.sub_tasks.iter_mut() {
+                    if sub.format != "cbz" && sub.status == SubTaskStatus::Pending {
+                        sub.status = SubTaskStatus::Failed;
+                        sub.error = Some(msg.clone());
+                    }
+                }
+            }
             let pending = active
                 .job
                 .sub_tasks
@@ -549,6 +571,9 @@ impl JobManagerInner {
     }
 
     fn take_next_packing(&mut self) -> Option<Job> {
+        if self.packing_count() >= self.max_packing {
+            return None;
+        }
         let job = self.queue.pop_front()?;
         let cancel = Arc::new(AtomicBool::new(false));
         let mut job = job;
@@ -700,6 +725,99 @@ mod tests {
         cleanup_temp_file(&path);
         assert!(!Path::new(&path).exists());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn cbz_job(name: &str) -> Job {
+        let mut job = Job::new(
+            JobInput {
+                comic_id: name.into(),
+                comic_name: name.into(),
+                folder_path: "D:\\comic".into(),
+                output_dir: "D:\\out".into(),
+                formats: vec!["cbz".into()],
+            },
+            "recommended".into(),
+            None,
+            OverwritePolicy::Rename,
+            600,
+            true,
+        );
+        job.rebuild_sub_tasks();
+        job
+    }
+
+    fn conversion_job(name: &str) -> Job {
+        let mut job = Job::new(
+            JobInput {
+                comic_id: name.into(),
+                comic_name: name.into(),
+                folder_path: "D:\\comic".into(),
+                output_dir: "D:\\out".into(),
+                formats: vec!["cbz".into(), "pdf".into()],
+            },
+            "recommended".into(),
+            None,
+            OverwritePolicy::Rename,
+            600,
+            true,
+        );
+        job.rebuild_sub_tasks();
+        if let Some(sub) = job.sub_tasks.iter_mut().find(|s| s.format == "cbz") {
+            sub.status = SubTaskStatus::Done;
+            sub.progress = 100;
+        }
+        job.results.push(JobResult {
+            format: "cbz".into(),
+            path: format!("{}.cbz", name),
+            renamed: None,
+            log_path: None,
+        });
+        job
+    }
+
+    #[test]
+    fn take_next_packing_respects_max_packing() {
+        let mut inner = JobManagerInner {
+            queue: VecDeque::new(),
+            active: HashMap::new(),
+            results: HashMap::new(),
+            max_packing: 2,
+            max_converting: 1,
+        };
+        for i in 0..3 {
+            inner.queue.push_back(cbz_job(&format!("c{}", i)));
+        }
+        let mut started = 0;
+        while inner.take_next_packing().is_some() {
+            started += 1;
+        }
+        assert_eq!(started, 2);
+        assert_eq!(inner.queue.len(), 1);
+        assert_eq!(inner.packing_count(), 2);
+    }
+
+    #[test]
+    fn take_next_conversion_respects_max_converting() {
+        let mut inner = JobManagerInner {
+            queue: VecDeque::new(),
+            active: HashMap::new(),
+            results: HashMap::new(),
+            max_packing: 2,
+            max_converting: 1,
+        };
+        for name in ["a", "b"] {
+            inner.active.insert(
+                name.to_string(),
+                ActiveJob {
+                    job: conversion_job(name),
+                    cancel: Arc::new(AtomicBool::new(false)),
+                    log_path: None,
+                    temp_cbz: None,
+                },
+            );
+        }
+        assert!(inner.take_next_conversion().is_some());
+        assert!(inner.take_next_conversion().is_none());
     }
 
     fn find_calibre() -> Option<std::path::PathBuf> {

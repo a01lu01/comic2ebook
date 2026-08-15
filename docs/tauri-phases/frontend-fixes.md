@@ -257,3 +257,28 @@ npm run tauri build → 成功
 - 根因：`finish_conversion` 在单个格式结束后就执行临时 CBZ 清理，未等全部格式完成。
 - 修复：清理逻辑移入任务终态分支，只有没有 running / pending 子任务时才删除临时 CBZ。
 - 验证：`cargo test` 13/13 通过；真实 Calibre AZW3 直转测试通过。
+
+---
+
+# 第十一次修复：并发调度检查与修复（完成）
+
+状态：✅ 完成
+日期：2026-08-16
+
+## 检查发现
+
+- `take_next_packing` 原本不检查打包并发上限，仅依赖外层 `tick` 检查。
+- CBZ 打包失败时，同任务尚未开始的 PDF/EPUB/AZW3/MOBI 会一直等待，任务卡在 active。
+- 修改并发设置后不会立即触发调度。
+
+## 修复
+
+- `take_next_packing` 内部增加 `max_packing` 上限检查。
+- CBZ 打包失败时，将同任务其他 pending 格式标记为失败并立即终态。
+- `update_settings` 修改并发后调用 `tick()` 立即生效。
+
+## 测试
+
+- 新增 `take_next_packing_respects_max_packing`
+- 新增 `take_next_conversion_respects_max_converting`
+- `cargo test` 16/16 通过
