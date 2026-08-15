@@ -24,15 +24,15 @@ async fn looks_like_calibre(path: &Path) -> bool {
     if !path.is_file() {
         return false;
     }
-    let result = tokio::time::timeout(Duration::from_secs(5), async {
-        Command::new(path)
-            .arg("--version")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await
-    })
-    .await;
+    let mut cmd = Command::new(path);
+    cmd.arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    let result = tokio::time::timeout(Duration::from_secs(5), cmd.status()).await;
     matches!(result, Ok(Ok(status)) if status.success())
 }
 
