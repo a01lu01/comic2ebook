@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Comic2Ebook</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="titlebar" data-tauri-drag-region>
+        <span class="titlebar-title" data-tauri-drag-region>Comic2Ebook</span>
+        <div class="titlebar-controls">
+          <button id="win-min" title="最小化">&#x2013;</button>
+          <button id="win-max" title="最大化">&#x25A1;</button>
+          <button id="win-close" title="关闭">&#x2715;</button>
+        </div>
+      </header>
+      <div class="app-body">
+        <aside class="sidebar">
+          <nav id="nav" class="nav"></nav>
+        </aside>
+        <main class="content">
+        <section id="page-convert" class="page" hidden>
+          <div class="page-title">漫画转电子书</div>
+          <div class="page-subtitle" id="convert-subtitle">批量将图片漫画转换为 CBZ / PDF / EPUB / AZW3 / MOBI</div>
+
+          <div class="card toolbar-card">
+            <div class="toolbar">
+              <div class="field toolbar-field">
+                <label>漫画文件夹</label>
+                <button class="btn btn-secondary" id="pick-folders">选择文件夹</button>
+              </div>
+              <div class="field output-field">
+                <label for="output-dir">输出目录</label>
+                <div class="row">
+                  <input id="output-dir" type="text" placeholder="未选择输出目录" readonly />
+                  <button class="btn btn-secondary" id="browse-output">浏览</button>
+                </div>
+              </div>
+            </div>
+            <div class="toolbar">
+              <div class="field formats-field">
+                <label>输出格式</label>
+                <div class="chip-group" id="format-chips">
+                  <label class="chip"><input type="checkbox" value="cbz" checked /><span>CBZ</span></label>
+                  <label class="chip"><input type="checkbox" value="pdf" checked /><span>PDF</span></label>
+                  <label class="chip"><input type="checkbox" value="epub" /><span>EPUB</span></label>
+                  <label class="chip"><input type="checkbox" value="azw3" /><span>AZW3</span></label>
+                  <label class="chip"><input type="checkbox" value="mobi" /><span>MOBI</span></label>
+                </div>
+              </div>
+              <div class="toolbar-actions">
+                <button class="btn btn-secondary" id="open-output">打开输出目录</button>
+                <button class="btn btn-secondary" id="copy-output">复制路径</button>
+                <button class="btn btn-primary" id="start-btn" disabled>开始转换</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h3>输入漫画</h3>
+              <span class="card-badge" id="folder-count">0 个文件夹</span>
+            </div>
+            <div id="folder-list" class="list empty">尚未选择文件夹</div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h3>转换任务</h3>
+              <div class="card-actions">
+                <span class="card-badge" id="task-count">0 个任务</span>
+                <button class="btn btn-secondary btn-small" id="clear-finished" disabled>清除已完成</button>
+                <button class="btn btn-secondary btn-small" id="clear-all" disabled>清空全部</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table id="task-table">
+                <thead>
+                  <tr>
+                    <th data-col="comic" style="width: 240px">漫画</th>
+                    <th data-col="status" style="width: 110px">状态</th>
+                    <th data-col="progress" style="width: 160px">进度</th>
+                    <th data-col="formats" style="width: 300px">格式</th>
+                    <th data-col="actions" style="width: 180px">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="task-body"></tbody>
+              </table>
+              <div class="empty" id="task-empty">等待开始转换</div>
+            </div>
+          </div>
+        </section>
+
+        <section id="page-settings" class="page" hidden>
+          <div class="page-title">设置</div>
+          <div class="page-subtitle">配置 Comic2Ebook 转换参数</div>
+
+          <div class="card">
+            <h3>Calibre</h3>
+            <div class="field">
+              <label for="calibre-path">ebook-convert.exe 路径</label>
+              <div class="row">
+                <input id="calibre-path" type="text" placeholder="留空自动检测" />
+                <button class="btn btn-secondary" id="browse-calibre">浏览</button>
+              </div>
+            </div>
+            <div class="status-line" id="calibre-status">检测中…</div>
+          </div>
+
+          <div class="card">
+            <h3>转换选项</h3>
+            <div class="field">
+              <label>转换参数预设</label>
+              <div class="segmented" id="profile-seg" data-value="recommended">
+                <button class="seg-btn" data-value="recommended">推荐</button>
+                <button class="seg-btn" data-value="compatible">兼容</button>
+              </div>
+            </div>
+            <div class="field">
+              <label>同名文件策略</label>
+              <div class="segmented" id="overwrite-seg" data-value="rename">
+                <button class="seg-btn" data-value="rename">自动重命名</button>
+                <button class="seg-btn" data-value="overwrite">覆盖</button>
+                <button class="seg-btn" data-value="fail">失败并提示</button>
+              </div>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="pack-conc">打包并发数</label>
+                <select id="pack-conc">
+                  <option value="1">1</option>
+                  <option value="2" selected>2</option>
+                  <option value="3">3</option>
+                  <option value="4">4</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="convert-conc">转换并发数</label>
+                <select id="convert-conc">
+                  <option value="1" selected>1</option>
+                  <option value="2">2</option>
+                </select>
+              </div>
+              <div class="field switch-field">
+                <div class="switch-row">
+                  <span>保留转换日志</span>
+                  <label class="switch"><input type="checkbox" id="keep-logs" checked /><span class="switch-slider"></span></label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>界面</h3>
+            <div class="field">
+              <label>界面主题</label>
+              <div class="segmented" id="theme-seg" data-value="system">
+                <button class="seg-btn" data-value="system">跟随系统</button>
+                <button class="seg-btn" data-value="light">浅色</button>
+                <button class="seg-btn" data-value="dark">深色</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-actions">
+            <button class="btn btn-secondary" id="settings-cancel">取消</button>
+            <button class="btn btn-primary" id="settings-save">保存</button>
+          </div>
+        </section>
+
+        <section id="page-about" class="page" hidden>
+          <div class="page-title">关于</div>
+          <div class="page-subtitle" id="about-subtitle">版本 1.0.0（Rust/Tauri）</div>
+          <div class="card">
+            <h3>关于</h3>
+            <p>将图片漫画文件夹批量转换为电子书的桌面工具，支持 CBZ / PDF / EPUB / AZW3 / MOBI。</p>
+            <p>转换 PDF / EPUB / AZW3 / MOBI 需要本机安装 Calibre。</p>
+          </div>
+          <div class="card">
+            <h3>技术栈</h3>
+            <p>Tauri 2 · Rust · Vite · 原生 JS · Calibre CLI</p>
+          </div>
+        </section>
+        </main>
+      </div>
+    </div>
+    <div id="toast" class="toast" hidden></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

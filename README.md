@@ -2,6 +2,8 @@
 
 将图片漫画文件夹批量转换为电子书的桌面工具，支持 CBZ / PDF / EPUB / AZW3 / MOBI 五种格式。
 
+> 重构版：Tauri 2 + Rust 版位于 [tauri/](tauri/README.md)，已可打包测试，产物为 NSIS 安装包；旧 Electron 版暂保留在仓库根目录。
+
 ![Dark theme preview](https://img.shields.io/badge/theme-dark%20default-08090a?style=for-the-badge)
 
 ---

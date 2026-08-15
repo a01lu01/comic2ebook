@@ -1,0 +1,28 @@
+[package]
+name = "comic2ebook"
+version = "1.0.0"
+description = "漫画转电子书工具（Tauri 2 + Rust）"
+authors = ["雪豹"]
+license = "MIT"
+edition = "2021"
+
+[lib]
+name = "comic2ebook_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["process", "time", "rt-multi-thread", "macros"] }
+zip = { version = "2", default-features = false }
+image = { version = "0.25", default-features = false, features = ["png"] }
+chrono = "0.4"
+uuid = { version = "1", features = ["v4"] }
+regex = "1"
+thiserror = "2"
