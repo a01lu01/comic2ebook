@@ -282,3 +282,15 @@ npm run tauri build → 成功
 - 新增 `take_next_packing_respects_max_packing`
 - 新增 `take_next_conversion_respects_max_converting`
 - `cargo test` 16/16 通过
+
+---
+
+# 第十二次修复：扩展并发上限（完成）
+
+状态：✅ 完成
+日期：2026-08-16
+
+- 打包并发可选范围扩至 1-8。
+- 转换并发可选范围扩至 1-4。
+- 默认值保持 2 + 1 不变。
+- 说明：Calibre 为 CPU 密集型，提高转换并发可占用更多核心；打包为 IO 密集型，主要影响磁盘带宽。
