@@ -1,3 +1,4 @@
+> 注意：本清单为旧 Electron 版历史文档，已由 [tauri2-regression-checklist.md](./tauri2-regression-checklist.md) 取代。
 # Comic2Ebook 回归检查清单
 
 > 每次 Phase 改动完成后，按此清单逐项验证。通过打 ✓，失败标 ✗ 并在备注中记录问题。
