@@ -497,17 +497,21 @@ select:focus {
 .folder-item {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 12px;
   padding: 10px;
   border: 1px solid var(--border);
   border-radius: 6px;
+  text-align: left;
 }
 
 .folder-count {
-  flex: 0 0 auto;
+  flex: 0 0 84px;
+  width: 84px;
   color: var(--subtext);
   font-size: 13px;
   white-space: nowrap;
+  text-align: left;
 }
 
 .folder-name {
@@ -515,6 +519,7 @@ select:focus {
   font-weight: 600;
   color: var(--accent-text);
   flex: 1;
+  text-align: left;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
