@@ -233,3 +233,15 @@ npm run tauri build → 成功
 - 首次修复：新增 `opener:allow-open-path` 权限。
 - 二次修复：为 `open_path` 配置 `allow: [{ "path": "**" }]` 路径范围，解决 `Not allowed to open path` 报错。
 - 日志按钮与“打开输出目录”均可正常使用。
+
+
+---
+
+# 第九次修复：无 CBZ 直接转换（完成）
+
+状态：✅ 完成
+日期：2026-08-16
+
+- 不勾选 CBZ 时，内部在系统临时目录生成临时 CBZ，Calibre 直接转换 AZW3 / MOBI / PDF / EPUB。
+- 转换完成、取消或清空时自动删除临时 CBZ。
+- 新增临时 CBZ 生成与真实 Calibre AZW3 端到端测试。

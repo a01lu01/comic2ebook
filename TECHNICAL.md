@@ -95,7 +95,7 @@
 
 1. 前端选择漫画文件夹，调用 `scan_folder` 生成预览。
 2. `enqueue_jobs` 创建 Job，`Orchestrator` 控制打包并发与转换并发。
-3. 需要 CBZ 时先由 `pack.rs` 流式打包；PNG 带 Alpha 时白底合成并输出 RGB。
+3. 需要 CBZ 时先由 `pack.rs` 流式打包；PNG 带 Alpha 时白底合成并输出 RGB。不勾选 CBZ 时会在系统临时目录生成临时 CBZ，转换完成后自动删除。
 4. 每个漫画使用一份合并日志（`{漫画名}_all_{时间}.log`），所有 Calibre 格式追加写入。
 5. Calibre 子进程以 `CREATE_NO_WINDOW` 静默启动，解析 `NN%` 进度。
 6. 任务进入 done / failed / cancelled 时发送 `job:result`；取消、失败、重试、清空均不会阻塞后续任务。

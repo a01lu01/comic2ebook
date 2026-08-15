@@ -14,7 +14,7 @@ use crate::{
         SubTaskStatus,
     },
     pack,
-    settings::{ConversionProfile, Settings},
+    settings::{ConversionProfile, OverwritePolicy, Settings},
 };
 
 type Inner = Arc<Mutex<JobManagerInner>>;
@@ -37,6 +37,7 @@ struct ActiveJob {
     job: Job,
     cancel: Arc<AtomicBool>,
     log_path: Option<String>,
+    temp_cbz: Option<String>,
 }
 
 struct JobManagerInner {
@@ -100,12 +101,14 @@ impl JobManager {
     }
 
     pub fn cancel(&self, job_id: &str) -> Result<(), ApiError> {
+        let temp_cbz: Option<String>;
         let finished: Option<Job> = {
             let mut g = self.inner.lock().unwrap();
             let Some(active) = g.active.remove(job_id) else {
                 return Err(AppError::custom("E_JOB_NOT_ACTIVE", "任务不在运行中").into());
             };
             active.cancel.store(true, Ordering::Relaxed);
+            temp_cbz = active.temp_cbz.clone();
             let mut job = active.job;
             job.status = JobStatus::Cancelled;
             job.error = Some("已取消".into());
@@ -113,6 +116,9 @@ impl JobManager {
             g.results.insert(job_id.to_string(), job.clone());
             Some(job)
         };
+        if let Some(path) = temp_cbz {
+            cleanup_temp_file(&path);
+        }
         if let Some(job) = finished {
             self.emit_update(&job);
             self.emit_result(&job);
@@ -123,12 +129,16 @@ impl JobManager {
 
     pub fn clear_all(&self) -> usize {
         let mut finished: Vec<Job> = Vec::new();
+        let mut temp_paths: Vec<String> = Vec::new();
         {
             let mut g = self.inner.lock().unwrap();
             g.queue.clear();
             let drained: Vec<(String, ActiveJob)> = g.active.drain().collect();
             for (id, active) in drained {
                 active.cancel.store(true, Ordering::Relaxed);
+                if let Some(path) = active.temp_cbz.clone() {
+                    temp_paths.push(path);
+                }
                 let mut job = active.job;
                 job.status = JobStatus::Cancelled;
                 job.error = Some("已取消".into());
@@ -136,6 +146,9 @@ impl JobManager {
                 g.results.insert(id, job.clone());
                 finished.push(job);
             }
+        }
+        for path in temp_paths {
+            cleanup_temp_file(&path);
         }
         let count = finished.len();
         for job in finished {
@@ -274,7 +287,35 @@ impl JobManager {
                     .map(|r| r.path.clone())
                     .unwrap_or_default()
             } else {
-                current.folder_path.clone()
+                let existing = inner
+                    .lock()
+                    .unwrap()
+                    .active
+                    .get(&job_id)
+                    .and_then(|a| a.temp_cbz.clone());
+                match existing {
+                    Some(path) => path,
+                    None => match pack_temp_cbz(&current, &cancel) {
+                        Ok(path) => {
+                            {
+                                let mut g = inner.lock().unwrap();
+                                if let Some(active) = g.active.get_mut(&job_id) {
+                                    active.temp_cbz = Some(path.clone());
+                                } else {
+                                    cleanup_temp_file(&path);
+                                }
+                            }
+                            path
+                        }
+                        Err(e) => {
+                            let _ = std::fs::remove_dir_all(
+                                std::env::temp_dir().join(format!("comic2ebook-{}", job_id)),
+                            );
+                            manager.finish_conversion(&job_id, &format, Err(e));
+                            return;
+                        }
+                    },
+                }
             };
             let calibre = current.calibre_path.clone().unwrap_or_default();
             let log_path = {
@@ -392,9 +433,11 @@ impl JobManager {
         format: &str,
         result: Result<convert::ConvertOutcome, AppError>,
     ) {
+        let temp_cbz: Option<String>;
         let finished: Option<Job> = {
             let mut g = self.inner.lock().unwrap();
             let Some(active) = g.active.get_mut(job_id) else { return };
+            temp_cbz = active.temp_cbz.clone();
             match result {
                 Ok(outcome) => {
                     if outcome.ok {
@@ -460,6 +503,9 @@ impl JobManager {
                 Some(active.job.clone())
             }
         };
+        if let Some(path) = temp_cbz {
+            cleanup_temp_file(&path);
+        }
         if let Some(job) = finished {
             self.finalize_job(job);
         }
@@ -508,11 +554,11 @@ impl JobManagerInner {
         let mut job = job;
         if job.formats.iter().any(|f| f == "cbz") {
             job.status = JobStatus::Packing;
-            self.active.insert(job.job_id.clone(), ActiveJob { job: job.clone(), cancel, log_path: None });
+            self.active.insert(job.job_id.clone(), ActiveJob { job: job.clone(), cancel, log_path: None, temp_cbz: None });
             Some(job)
         } else {
             job.status = JobStatus::Converting;
-            self.active.insert(job.job_id.clone(), ActiveJob { job: job.clone(), cancel, log_path: None });
+            self.active.insert(job.job_id.clone(), ActiveJob { job: job.clone(), cancel, log_path: None, temp_cbz: None });
             None
         }
     }
@@ -569,6 +615,26 @@ impl JobManagerInner {
     }
 }
 
+fn pack_temp_cbz(job: &Job, cancel: &AtomicBool) -> Result<String, AppError> {
+    let temp_root = std::env::temp_dir().join(format!("comic2ebook-{}", job.job_id));
+    std::fs::create_dir_all(&temp_root)?;
+    let mut temp_job = job.clone();
+    temp_job.output_dir = temp_root.to_string_lossy().into_owned();
+    temp_job.formats = vec!["cbz".to_string()];
+    temp_job.overwrite_policy = OverwritePolicy::Overwrite;
+    let result = pack::pack_cbz(&temp_job, &mut |_| {}, cancel)?;
+    Ok(result.path)
+}
+
+fn cleanup_temp_file(path: &str) {
+    let p = std::path::Path::new(path);
+    let parent = p.parent().map(|d| d.to_path_buf());
+    let _ = std::fs::remove_file(p);
+    if let Some(dir) = parent {
+        let _ = std::fs::remove_dir(dir);
+    }
+}
+
 fn is_conversion_ready(job: &Job) -> bool {
     if job
         .sub_tasks
@@ -597,4 +663,104 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::JobInput;
+    use crate::settings::OverwritePolicy;
+    use std::path::Path;
+
+    #[test]
+    fn pack_temp_cbz_creates_and_cleans() {
+        let dir = std::env::temp_dir().join("comic2ebook-tempcbz-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["1.jpg", "2.jpg"] {
+            std::fs::write(dir.join(name), format!("fake-{name}")).unwrap();
+        }
+        let job = Job::new(
+            JobInput {
+                comic_id: "c1".into(),
+                comic_name: "临时测试".into(),
+                folder_path: dir.to_string_lossy().into_owned(),
+                output_dir: dir.to_string_lossy().into_owned(),
+                formats: vec!["azw3".into()],
+            },
+            "recommended".into(),
+            None,
+            OverwritePolicy::Rename,
+            600,
+            true,
+        );
+        let cancel = AtomicBool::new(false);
+        let path = pack_temp_cbz(&job, &cancel).unwrap();
+        assert!(Path::new(&path).exists());
+        cleanup_temp_file(&path);
+        assert!(!Path::new(&path).exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn find_calibre() -> Option<std::path::PathBuf> {
+        let candidates = [
+            std::env::var("LOCALAPPDATA")
+                .ok()
+                .map(|p| std::path::PathBuf::from(p).join("Programs/Calibre/ebook-convert.exe")),
+            std::env::var("APPDATA")
+                .ok()
+                .map(|p| std::path::PathBuf::from(p).join("Calibre2/ebook-convert.exe")),
+            Some(std::path::PathBuf::from("C:\\Program Files\\Calibre2\\ebook-convert.exe")),
+        ];
+        candidates.into_iter().flatten().find(|p| p.is_file())
+    }
+
+    #[test]
+    fn temp_cbz_converts_with_calibre_when_available() {
+        let Some(calibre) = find_calibre() else {
+            eprintln!("Calibre not found, skipping integration test");
+            return;
+        };
+        let dir = std::env::temp_dir().join("comic2ebook-tempcbz-calibre-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/Comic-A-1-10");
+        for (i, name) in ["1.jpg", "2.jpg"].iter().enumerate() {
+            std::fs::copy(sample.join(name), dir.join(format!("{}.jpg", i + 1))).unwrap();
+        }
+        let job = Job::new(
+            JobInput {
+                comic_id: "c1".into(),
+                comic_name: "临时直转".into(),
+                folder_path: dir.to_string_lossy().into_owned(),
+                output_dir: dir.to_string_lossy().into_owned(),
+                formats: vec!["azw3".into()],
+            },
+            "recommended".into(),
+            Some(calibre.to_string_lossy().into_owned()),
+            OverwritePolicy::Rename,
+            600,
+            true,
+        );
+        let cancel = AtomicBool::new(false);
+        let temp_cbz = pack_temp_cbz(&job, &cancel).unwrap();
+        let log = dir.join("convert.log");
+        let outcome = convert::convert(
+            &job,
+            "azw3",
+            &calibre.to_string_lossy(),
+            &temp_cbz,
+            Some(&log),
+            &mut |_| {},
+            &cancel,
+        )
+        .unwrap();
+        assert!(
+            outcome.ok,
+            "calibre failed: {}",
+            std::fs::read_to_string(&log).unwrap_or_default()
+        );
+        cleanup_temp_file(&temp_cbz);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
