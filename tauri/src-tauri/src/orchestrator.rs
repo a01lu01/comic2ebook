@@ -36,6 +36,7 @@ impl Clone for JobManager {
 struct ActiveJob {
     job: Job,
     cancel: Arc<AtomicBool>,
+    log_path: Option<String>,
 }
 
 struct JobManagerInner {
@@ -276,10 +277,13 @@ impl JobManager {
                 current.folder_path.clone()
             };
             let calibre = current.calibre_path.clone().unwrap_or_default();
-            let log_path = if current.keep_logs {
-                logs::create_log(&current.comic_name, &format).ok()
-            } else {
-                None
+            let log_path = {
+                let mut g = inner.lock().unwrap();
+                let Some(active) = g.active.get_mut(&job_id) else { return };
+                if active.job.keep_logs && active.log_path.is_none() {
+                    active.log_path = logs::create_log(&active.job.comic_name, "all").ok().map(|p| p.to_string_lossy().into_owned());
+                }
+                active.log_path.clone()
             };
             let fmt = format.clone();
             let mut on_progress = |p: ConvertProgress| {
@@ -324,7 +328,7 @@ impl JobManager {
                     &format,
                     &calibre,
                     &source,
-                    log_path.as_deref(),
+                    log_path.as_deref().map(std::path::Path::new),
                     &mut on_progress,
                     &cancel,
                 )
@@ -504,11 +508,11 @@ impl JobManagerInner {
         let mut job = job;
         if job.formats.iter().any(|f| f == "cbz") {
             job.status = JobStatus::Packing;
-            self.active.insert(job.job_id.clone(), ActiveJob { job: job.clone(), cancel });
+            self.active.insert(job.job_id.clone(), ActiveJob { job: job.clone(), cancel, log_path: None });
             Some(job)
         } else {
             job.status = JobStatus::Converting;
-            self.active.insert(job.job_id.clone(), ActiveJob { job: job.clone(), cancel });
+            self.active.insert(job.job_id.clone(), ActiveJob { job: job.clone(), cancel, log_path: None });
             None
         }
     }

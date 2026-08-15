@@ -49,6 +49,8 @@ pub struct Settings {
     pub convert_concurrency: u32,
     pub theme_mode: ThemeMode,
     pub keep_logs: bool,
+    pub selected_formats: Vec<String>,
+    pub last_comic_dir: String,
 }
 
 impl Default for Settings {
@@ -64,6 +66,8 @@ impl Default for Settings {
             convert_concurrency: 1,
             theme_mode: ThemeMode::System,
             keep_logs: true,
+            selected_formats: vec!["cbz".to_string(), "pdf".to_string()],
+            last_comic_dir: String::new(),
         }
     }
 }

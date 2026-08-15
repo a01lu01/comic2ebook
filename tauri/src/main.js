@@ -36,6 +36,8 @@ const DEFAULT_SETTINGS = {
   convertConcurrency: 1,
   themeMode: "system",
   keepLogs: true,
+  selectedFormats: ["cbz", "pdf"],
+  lastComicDir: "",
 };
 
 const state = {
@@ -106,6 +108,19 @@ function setBtnIcon(id, svg) {
   el.prepend(span);
 }
 
+function commonParent(paths) {
+  if (!paths || paths.length === 0) return "";
+  const norm = (p) => String(p).replace(/[\\/]+$/, "");
+  const parts = norm(paths[0]).split(/[\\/]/).slice(0, -1);
+  for (const p of paths.slice(1)) {
+    const next = norm(p).split(/[\\/]/).slice(0, -1);
+    let i = 0;
+    while (i < parts.length && i < next.length && parts[i].toLowerCase() === next[i].toLowerCase()) i++;
+    parts.length = i;
+  }
+  return parts.length ? parts.join("\\") : "";
+}
+
 function toast(message) {
   els.toast.textContent = message;
   els.toast.hidden = false;
@@ -143,6 +158,18 @@ function applyTheme(mode = state.settings.themeMode || "system") {
         : "light"
       : mode;
   document.documentElement.dataset.theme = theme;
+}
+
+function syncFormatChips() {
+  const saved = Array.isArray(state.settings.selectedFormats)
+    ? state.settings.selectedFormats
+    : ["cbz", "pdf"];
+  const valid = saved.filter((f) => ["cbz", "pdf", "epub", "azw3", "mobi"].includes(f));
+  state.formats = valid.length ? valid : ["cbz", "pdf"];
+  for (const input of els.formatChips.querySelectorAll("input")) {
+    input.checked = state.formats.includes(input.value);
+  }
+  updateStart();
 }
 
 async function saveSettingsSilently() {
@@ -242,12 +269,12 @@ function taskHtml(task) {
       )}">${icon(rotateCwSvg)}<span>重试</span></button>`
     );
   }
-  for (const r of task.results || []) {
-    if (!r.logPath) continue;
+  const logPaths = [...new Set((task.results || []).map((r) => r.logPath).filter(Boolean))];
+  for (const logPath of logPaths) {
     actions.push(
       `<button class="btn" data-action="log" data-path="${escapeHtml(
-        r.logPath
-      )}">${icon(fileTextSvg)}<span>${escapeHtml(r.format.toUpperCase())} 日志</span></button>`
+        logPath
+      )}">${icon(fileTextSvg)}<span>日志</span></button>`
     );
   }
 
@@ -370,6 +397,8 @@ async function saveSettingsFromForm() {
     convertConcurrency: Number(els.convertConc.value),
     themeMode: currentSegmented(els.themeSeg),
     keepLogs: els.keepLogs.checked,
+    selectedFormats: [...state.formats],
+    lastComicDir: state.settings.lastComicDir || "",
   };
   try {
     const saved = await invoke("save_settings", { settings });
@@ -449,9 +478,15 @@ function setupEventListeners() {
       directory: true,
       multiple: true,
       title: "选择漫画文件夹",
+      defaultPath: state.settings.lastComicDir || undefined,
     });
     if (!dirs) return;
     for (const dir of dirs) await addFolder(dir);
+    const parent = commonParent(dirs);
+    if (parent) {
+      state.settings.lastComicDir = parent;
+      await saveSettingsSilently();
+    }
   });
 
   els.folderList.addEventListener("click", (e) => {
@@ -473,10 +508,12 @@ function setupEventListeners() {
     await saveSettingsSilently();
   });
 
-  els.formatChips.addEventListener("change", () => {
+  els.formatChips.addEventListener("change", async () => {
     state.formats = Array.from(
       els.formatChips.querySelectorAll("input:checked")
     ).map((input) => input.value);
+    state.settings.selectedFormats = [...state.formats];
+    await saveSettingsSilently();
     updateStart();
   });
 
@@ -593,6 +630,7 @@ async function init() {
   } catch {
     state.settings = { ...DEFAULT_SETTINGS };
   }
+  syncFormatChips();
   if (
     state.settings.outputMode === "fixedDir" &&
     state.settings.fixedOutputDir

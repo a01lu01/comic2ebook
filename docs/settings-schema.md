@@ -14,7 +14,11 @@
   "overwritePolicy": "rename",
   "profile": "recommended",
   "packingConcurrency": 2,
-  "convertConcurrency": 1
+  "convertConcurrency": 1,
+  "themeMode": "system",
+  "keepLogs": true,
+  "selectedFormats": ["cbz", "pdf"],
+  "lastComicDir": ""
 }
 ```
 
@@ -29,6 +33,10 @@
 | `profile` | string | `"recommended"` | `"recommended"` / `"compatible"` |
 | `packingConcurrency` | number | 2 | Max concurrent CBZ packing jobs (Phase 3) |
 | `convertConcurrency` | number | 1 | Max concurrent Calibre conversions (Phase 3) |
+| `themeMode` | string | `"system"` | `"system"` / `"light"` / `"dark"` |
+| `keepLogs` | boolean | `true` | Whether to keep conversion logs |
+| `selectedFormats` | string[] | `["cbz","pdf"]` | Remembered output format selection |
+| `lastComicDir` | string | `""` | Last comic folder parent used as dialog default |
 
 ## Migration
 
